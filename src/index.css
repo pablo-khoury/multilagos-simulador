@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-red: #D40B3A;
+  --color-brand-red-hover: #B50931;
+  --color-brand-dark: #111F24;
+  --color-brand-dark-card: #19272D;
+  --color-brand-ice: #CDDADE;
+  --color-brand-slate: #BDC3C7;
+  --color-brand-gray: #E0E0E0;
+}
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    background-color: #111F24;
+    color: #CDDADE;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: 'Cabinet Grotesk', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* Individual A4 Discrete Sheet for PDF & Print */
+.pdf-document {
+  background-color: #f1f5f9;
+}
+
+.pdf-page {
+  width: 794px;
+  min-height: 1123px;
+  max-height: 1123px;
+  height: 1123px;
+  overflow: hidden;
+  background-color: #ffffff;
+  color: #0f172a;
+  padding: 24px 34px;
+  margin: 0 auto 24px auto;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  page-break-after: always;
+  break-after: page;
+}
+
+.pdf-page:last-child {
+  margin-bottom: 0;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  /* Hide non-printable navigation, interactive buttons, floating tools */
+  header, footer, nav, .no-print, button, .interactive-controls, #floating-whatsapp {
+    display: none !important;
+  }
+
+  body {
+    background-color: #ffffff !important;
+    color: #111F24 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .pdf-document {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .pdf-page {
+    box-shadow: none !important;
+    border: none !important;
+    padding: 12mm 14mm !important;
+    margin: 0 !important;
+    width: 210mm !important;
+    max-width: 210mm !important;
+    height: 297mm !important;
+    min-height: 297mm !important;
+    max-height: 297mm !important;
+    overflow: hidden !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    box-sizing: border-box !important;
+  }
+}
+
+.bg-brand-red { background-color: #D40B3A; }
+.bg-brand-red-hover:hover { background-color: #B50931; }
+.text-brand-red { color: #D40B3A; }
+.border-brand-red { border-color: #D40B3A; }
+
+.bg-brand-dark { background-color: #111F24; }
+.bg-brand-dark-card { background-color: #16242A; }
+.text-brand-dark { color: #111F24; }
+.border-brand-dark { border-color: #111F24; }

@@ -1,0 +1,7 @@
+<svg viewBox="0 0 320 84" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <text x="8" y="42" fill="#D40B3A" font-family="system-ui, -apple-system, sans-serif" font-weight="800" font-size="38" letter-spacing="2.5">MULTILAGOS</text>
+  <circle cx="304" cy="22" r="7" stroke="#111F24" stroke-width="1.2" fill="none" />
+  <text x="304" y="25.5" fill="#111F24" font-family="sans-serif" font-weight="bold" font-size="8" text-anchor="middle">R</text>
+  <line x1="8" y1="51" x2="295" y2="51" stroke="#111F24" stroke-width="2.2" stroke-linecap="round" />
+  <text x="22" y="72" fill="#111F24" font-family="system-ui, -apple-system, sans-serif" font-weight="500" font-size="21" letter-spacing="1">Negócios &amp; Tecnologia</text>
+</svg>
