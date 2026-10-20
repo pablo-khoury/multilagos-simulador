@@ -1,0 +1,400 @@
+{
+  "plans": [
+    {
+      "id": "essencial",
+      "track": "asaas",
+      "name": "Essencial",
+      "headline": "Conta digital, cobrança automatizada e gestão financeira",
+      "baseMonthlyPrice": 99,
+      "baseSetupPrice": 750,
+      "idealFor": "Pequenas operações que precisam padronizar recebíveis e sair do manual",
+      "sla": "SLA de Atendimento em até 8h úteis",
+      "features": [
+        "Consultoria de setup inicial",
+        "Treinamento da equipe",
+        "Migração da base de clientes",
+        "Régua de cobrança completa",
+        "Fatura personalizada"
+      ]
+    },
+    {
+      "id": "pro",
+      "track": "asaas",
+      "name": "PRO",
+      "headline": "Tudo do Essencial + Emissão de Nota Fiscal de Serviço (NFS-e) automatizada",
+      "baseMonthlyPrice": 379,
+      "baseSetupPrice": 2500,
+      "recommended": true,
+      "badge": "Mais Indicado",
+      "idealFor": "A maioria dos negócios de serviços e recorrência que precisam de automação fiscal",
+      "sla": "SLA Prioritário em até 4h úteis",
+      "features": [
+        "Consultoria de setup inicial",
+        "Treinamento da equipe",
+        "Migração da base de clientes",
+        "Régua de cobrança completa",
+        "Fatura personalizada",
+        "Nota fiscal de serviço automática (NFS-e)"
+      ]
+    },
+    {
+      "id": "performance",
+      "track": "asaas",
+      "name": "Performance",
+      "headline": "Tudo do PRO + Split de Pagamento, Integração com ERPs e Dashboard",
+      "baseMonthlyPrice": 599,
+      "baseSetupPrice": 3500,
+      "idealFor": "Empresas em expansão que utilizam ERP e exigem gestão financeira contínua",
+      "sla": "SLA Crítico em até 1 hora",
+      "features": [
+        "Consultoria de setup inicial",
+        "Treinamento da equipe",
+        "Migração da base de clientes",
+        "Régua de cobrança completa",
+        "Fatura personalizada",
+        "Nota fiscal de serviço automática (NFS-e)",
+        "Split de pagamento automático",
+        "Integração com ERPs (Omie, Conta Azul, etc.)",
+        "Dashboard e BI avançado",
+        "Consultoria estratégica mensal com Pablo Khoury"
+      ]
+    },
+    {
+      "id": "personalizado",
+      "track": "asaas",
+      "name": "Personalizado",
+      "headline": "Integrações necessárias, fluxos personalizados de processos, processos de onboarding e etc.",
+      "baseMonthlyPrice": 950,
+      "baseSetupPrice": 4800,
+      "idealFor": "Integrações necessárias, fluxos personalizados de processos, processos de onboarding e etc.",
+      "sla": "SLA Imediato com Gerente de Contas Dedicado",
+      "features": [
+        "Consultoria de setup inicial",
+        "Treinamento da equipe",
+        "Migração da base de clientes",
+        "Régua de cobrança completa",
+        "Fatura personalizada",
+        "Nota fiscal de serviço automática (NFS-e)",
+        "Split de pagamento automático",
+        "Integrações necessárias",
+        "Fluxos personalizados de processos",
+        "Processos de onboarding e etc.",
+        "Consultoria estratégica sob medida com Pablo Khoury"
+      ]
+    },
+    {
+      "id": "regua-1k",
+      "track": "regua-n8n",
+      "name": "1.000",
+      "headline": "Até 1.000 mensagens automáticas/mês pelo WhatsApp",
+      "baseMonthlyPrice": 179,
+      "baseSetupPrice": 650,
+      "messageQuota": 1000,
+      "idealFor": "Operações com até 300 clientes ativos",
+      "sla": "SLA em até 8h úteis",
+      "features": [
+        "Lembretes antes do vencimento e aviso no dia do vencimento",
+        "Cobranças e acompanhamento (follow-up) automáticos após o atraso",
+        "Envio pelo WhatsApp da própria empresa",
+        "Integração com o seu sistema de pagamento atual",
+        "Configuração da estratégia e textos validados antes da ativação",
+        "Custos da Meta (WhatsApp) incluídos na mensalidade"
+      ]
+    },
+    {
+      "id": "regua-3k",
+      "track": "regua-n8n",
+      "name": "3.000",
+      "headline": "Até 3.000 mensagens automáticas/mês pelo WhatsApp",
+      "baseMonthlyPrice": 299,
+      "baseSetupPrice": 950,
+      "messageQuota": 3000,
+      "recommended": true,
+      "badge": "Popular",
+      "idealFor": "Empresas em crescimento com até 1.000 contratos",
+      "sla": "SLA Prioritário em até 4h úteis",
+      "features": [
+        "Lembretes antes do vencimento e aviso no dia do vencimento",
+        "Cobranças e acompanhamento (follow-up) automáticos após o atraso",
+        "Envio pelo WhatsApp da própria empresa",
+        "Integração com o seu sistema de pagamento atual",
+        "Configuração da estratégia e textos validados antes da ativação",
+        "Custos da Meta (WhatsApp) incluídos na mensalidade"
+      ]
+    },
+    {
+      "id": "regua-5k",
+      "track": "regua-n8n",
+      "name": "5.000",
+      "headline": "Até 5.000 mensagens automáticas/mês pelo WhatsApp",
+      "baseMonthlyPrice": 499,
+      "baseSetupPrice": 1400,
+      "messageQuota": 5000,
+      "idealFor": "Operações robustas com cobrança parcelada ou recorrente",
+      "sla": "SLA Prioritário em até 2h úteis",
+      "features": [
+        "Lembretes antes do vencimento e aviso no dia do vencimento",
+        "Cobranças e acompanhamento (follow-up) automáticos após o atraso",
+        "Envio pelo WhatsApp da própria empresa",
+        "Integração com o seu sistema de pagamento atual",
+        "Configuração da estratégia e textos validados antes da ativação",
+        "Custos da Meta (WhatsApp) incluídos na mensalidade"
+      ]
+    },
+    {
+      "id": "regua-10k",
+      "track": "regua-n8n",
+      "name": "10.000",
+      "headline": "Até 10.000 mensagens automáticas/mês pelo WhatsApp",
+      "baseMonthlyPrice": 999,
+      "baseSetupPrice": 1900,
+      "messageQuota": 10000,
+      "idealFor": "Grandes carteiras com carnês, mensalidades e alto fluxo",
+      "sla": "SLA Crítico em até 1 hora",
+      "features": [
+        "Lembretes antes do vencimento e aviso no dia do vencimento",
+        "Cobranças e acompanhamento (follow-up) automáticos após o atraso",
+        "Envio pelo WhatsApp da própria empresa",
+        "Integração com o seu sistema de pagamento atual",
+        "Configuração da estratégia e textos validados antes da ativação",
+        "Custos da Meta (WhatsApp) incluídos na mensalidade"
+      ]
+    }
+  ],
+  "pricingTiers": [
+    {
+      "id": "tier-100",
+      "minClients": 1,
+      "maxClients": 100,
+      "label": "1 a 100 clientes",
+      "plans": {
+        "essencial": {
+          "monthlyPrice": 99,
+          "setupPrice": 750
+        },
+        "pro": {
+          "monthlyPrice": 379,
+          "setupPrice": 2500
+        },
+        "performance": {
+          "monthlyPrice": 599,
+          "setupPrice": 3500
+        },
+        "personalizado": {
+          "monthlyPrice": 950,
+          "setupPrice": 4800
+        }
+      }
+    },
+    {
+      "id": "tier-300",
+      "minClients": 101,
+      "maxClients": 300,
+      "label": "101 a 300 clientes",
+      "plans": {
+        "essencial": {
+          "monthlyPrice": 149,
+          "setupPrice": 950
+        },
+        "pro": {
+          "monthlyPrice": 449,
+          "setupPrice": 2800
+        },
+        "performance": {
+          "monthlyPrice": 699,
+          "setupPrice": 3900
+        },
+        "personalizado": {
+          "monthlyPrice": 1150,
+          "setupPrice": 5200
+        }
+      }
+    },
+    {
+      "id": "tier-500",
+      "minClients": 301,
+      "maxClients": 500,
+      "label": "301 a 500 clientes",
+      "plans": {
+        "essencial": {
+          "monthlyPrice": 199,
+          "setupPrice": 1250
+        },
+        "pro": {
+          "monthlyPrice": 549,
+          "setupPrice": 3200
+        },
+        "performance": {
+          "monthlyPrice": 849,
+          "setupPrice": 4400
+        },
+        "personalizado": {
+          "monthlyPrice": 1350,
+          "setupPrice": 5800
+        }
+      }
+    },
+    {
+      "id": "tier-1000",
+      "minClients": 501,
+      "maxClients": 1000,
+      "label": "501 a 1.000 clientes",
+      "plans": {
+        "essencial": {
+          "monthlyPrice": 299,
+          "setupPrice": 1650
+        },
+        "pro": {
+          "monthlyPrice": 699,
+          "setupPrice": 3800
+        },
+        "performance": {
+          "monthlyPrice": 1099,
+          "setupPrice": 5200
+        },
+        "personalizado": {
+          "monthlyPrice": 1650,
+          "setupPrice": 6800
+        }
+      }
+    },
+    {
+      "id": "tier-2500",
+      "minClients": 1001,
+      "maxClients": 2500,
+      "label": "1.001 a 2.500 clientes",
+      "plans": {
+        "essencial": {
+          "monthlyPrice": 449,
+          "setupPrice": 2200
+        },
+        "pro": {
+          "monthlyPrice": 949,
+          "setupPrice": 4800
+        },
+        "performance": {
+          "monthlyPrice": 1499,
+          "setupPrice": 6500
+        },
+        "personalizado": {
+          "monthlyPrice": 2250,
+          "setupPrice": 8500
+        }
+      }
+    },
+    {
+      "id": "tier-5000",
+      "minClients": 2501,
+      "maxClients": 5000,
+      "label": "2.501 a 5.000 clientes",
+      "plans": {
+        "essencial": {
+          "monthlyPrice": 599,
+          "setupPrice": 2800
+        },
+        "pro": {
+          "monthlyPrice": 1290,
+          "setupPrice": 5800
+        },
+        "performance": {
+          "monthlyPrice": 1990,
+          "setupPrice": 7900
+        },
+        "personalizado": {
+          "monthlyPrice": 2950,
+          "setupPrice": 10500
+        }
+      }
+    },
+    {
+      "id": "tier-10000",
+      "minClients": 5001,
+      "maxClients": 10000,
+      "label": "5.001 a 10.000 clientes",
+      "plans": {
+        "essencial": {
+          "monthlyPrice": 849,
+          "setupPrice": 3600
+        },
+        "pro": {
+          "monthlyPrice": 1890,
+          "setupPrice": 7500
+        },
+        "performance": {
+          "monthlyPrice": 2790,
+          "setupPrice": 9800
+        },
+        "personalizado": {
+          "monthlyPrice": 3900,
+          "setupPrice": 13500
+        }
+      }
+    },
+    {
+      "id": "tier-plus",
+      "minClients": 10001,
+      "maxClients": 999999,
+      "label": "Acima de 10.000 clientes",
+      "plans": {
+        "essencial": {
+          "monthlyPrice": 1290,
+          "setupPrice": 4800
+        },
+        "pro": {
+          "monthlyPrice": 2690,
+          "setupPrice": 9800
+        },
+        "performance": {
+          "monthlyPrice": 3990,
+          "setupPrice": 13500
+        },
+        "personalizado": {
+          "monthlyPrice": 5800,
+          "setupPrice": 18000
+        }
+      }
+    }
+  ],
+  "asaasConfig": {
+    "apiKey": "$aact_YTU5YTE0M2M2N2I4MTliNjc0OTQ1NjgzMzFiMzMzMjM6OjAwMDAwMDAwMDAwMDAwNzE0NTg6OiRhYWNoXzM0OTYwMmE3LWMxZDMtNDcxOS1iMDYzLTBmNWE5NDk0MzE4NQ==",
+    "environment": "sandbox",
+    "approvedRatePerLiquidation": 0.99,
+    "webhookUrl": "https://www.multilagos.com.br/api/webhooks/asaas",
+    "autoIssueNfse": true,
+    "erpIntegration": "omie"
+  },
+  "diagnosticData": {
+    "companyName": "Minha Empresa Ltda",
+    "segment": "Prestação de Serviços",
+    "monthlyRevenue": 30000,
+    "clientCount": 500,
+    "delinquentClientCount": 445,
+    "delinquencyInputMode": "percent",
+    "delinquencyInputPercent": 89,
+    "newClientsPerMonth": 5,
+    "churnClientsPerMonth": 3,
+    "issuesNfse": "sim",
+    "hasCommissionOrSplit": "sim",
+    "billingModel": "recorrente",
+    "financialTeamSize": 3,
+    "paymentMethods": {
+      "pix": true,
+      "pixFee": 1.5,
+      "pixFeeType": "fixed",
+      "boleto": false,
+      "boletoFee": 3.5,
+      "creditCard": false,
+      "creditCardFee": 3.99,
+      "debitCard": false,
+      "debitCardFee": 1.99
+    },
+    "currentSystem": "Planilhas e ERP",
+    "collectionMethodNotes": "Cobrança manual por WhatsApp e conferência de extrato",
+    "hoursSpentPerWeek": 10,
+    "reductionGoalPercent": 80,
+    "generalNotes": "Cliente busca otimizar a equipe de faturamento, padronizar a emissão fiscal de NFS-e e reduzir atrasos nas mensalidades."
+  },
+  "contractVersion": "2.0 (Oficial Atualizado)",
+  "contractForo": "Comarca de Belo Horizonte/MG",
+  "exportedAt": "2026-10-20T01:46:43.539Z"
+}

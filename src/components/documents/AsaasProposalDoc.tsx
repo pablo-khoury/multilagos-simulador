@@ -48,10 +48,14 @@ export const AsaasProposalDoc: React.FC<AsaasProposalDocProps> = ({
           {/* Title & Subtitle */}
           <div>
             <h1 className="text-xl font-bold text-slate-950 tracking-tight">
-              Proposta Comercial · Implementação Asaas
+              {proposal.selectedServices && proposal.selectedServices.length > 1
+                ? 'Proposta Comercial · Soluções Integradas'
+                : 'Proposta Comercial · Implementação Asaas'}
             </h1>
             <p className="text-[10.5px] text-slate-600 mt-0.5">
-              Conta digital, cobrança automatizada e gestão financeira implantadas por especialistas homologados
+              {proposal.selectedServices && proposal.selectedServices.length > 1
+                ? proposal.selectedServices.map((s) => s.name).join(' + ')
+                : 'Conta digital, cobrança automatizada e gestão financeira implantadas por especialistas homologados'}
             </p>
           </div>
 
@@ -89,7 +93,7 @@ export const AsaasProposalDoc: React.FC<AsaasProposalDocProps> = ({
               <div className="grid grid-cols-12 py-1 px-2 bg-white">
                 <span className="col-span-4 font-bold text-slate-800">Contrato Mestre Vinculado:</span>
                 <span className="col-span-8 text-slate-800 font-mono">
-                  Nº {proposal.contractMasterId} · Versão 1.0 · Assinado em {isSigned && signatureData.signedAt ? signatureData.signedAt.split(' ')[0] : proposal.createdAt}
+                  Nº {proposal.contractMasterId || 'MSA-2026-001'} · Versão 2.0 (Oficial Atualizado) · Assinado em {isSigned && signatureData.signedAt ? signatureData.signedAt.split(' ')[0] : proposal.createdAt}
                 </span>
               </div>
               <div className="grid grid-cols-12 py-1 px-2 bg-slate-50">
@@ -210,8 +214,8 @@ export const AsaasProposalDoc: React.FC<AsaasProposalDocProps> = ({
                   <tr>
                     <td className="py-0.5 px-2 text-slate-800 font-medium">Split de pagamento automático</td>
                     <td className="py-0.5 text-center border-l border-slate-200 text-slate-400">—</td>
-                    <td className="py-0.5 text-center border-l border-slate-200 font-bold text-[#D40B3A]">✓</td>
-                    <td className="py-0.5 text-center border-l border-slate-200 font-bold text-slate-700">✓</td>
+                    <td className="py-0.5 text-center border-l border-slate-200 text-slate-400">—</td>
+                    <td className={`py-0.5 text-center border-l border-slate-200 font-bold ${isPerformance ? 'text-[#D40B3A]' : 'text-slate-700'}`}>✓</td>
                     <td className="py-0.5 text-center border-l border-slate-200 font-bold text-slate-700">✓</td>
                   </tr>
                   <tr className="bg-slate-50">
@@ -335,6 +339,25 @@ export const AsaasProposalDoc: React.FC<AsaasProposalDocProps> = ({
               </table>
             </div>
 
+            {/* Detalhamento de Serviços Contratados (se mais de 1) */}
+            {proposal.selectedServices && proposal.selectedServices.length > 1 && (
+              <div className="border border-slate-300 rounded overflow-hidden text-[9px] bg-slate-50">
+                <div className="bg-slate-800 text-white font-bold py-0.5 px-2">
+                  Detalhamento dos Serviços Contratados nesta Proposta ({proposal.selectedServices.length}):
+                </div>
+                <div className="divide-y divide-slate-200">
+                  {proposal.selectedServices.map((serv, idx) => (
+                    <div key={idx} className="flex items-center justify-between py-0.5 px-2">
+                      <span className="font-semibold text-slate-900">• {serv.name}</span>
+                      <span className="font-mono text-slate-700">
+                        Setup: {formatBRL(serv.setupPrice)} | Mensal: <strong className="text-[#D40B3A]">{formatBRL(serv.monthlyPrice)}/mês</strong>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <p className="text-[9px] text-slate-500 pt-0.5">
               Custos do Asaas são cobrados diretamente pelo Asaas conforme tabela homologada de parceiro:
             </p>
@@ -372,37 +395,72 @@ export const AsaasProposalDoc: React.FC<AsaasProposalDocProps> = ({
 
           {/* SEÇÃO 4: CRONOGRAMA */}
           <div className="space-y-0.5">
-            <h2 className="font-bold text-[#D40B3A] text-[10.5px] uppercase tracking-wider">
-              SEÇÃO 4 · CRONOGRAMA DE ATIVAÇÃO
-            </h2>
-            <div className="border border-slate-300 rounded overflow-hidden text-[9.5px]">
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-[#D40B3A] text-[10.5px] uppercase tracking-wider">
+                SEÇÃO 4 · CRONOGRAMA E TEMPO ESTIMADO DE IMPLANTAÇÃO
+              </h2>
+              <span className="text-[9px] font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-300">
+                Tempo Total Estimado: <strong className="text-[#D40B3A]">{proposal.serviceTrack === 'esteira-regua-n8n' ? 'Até 5 dias úteis' : '20 dias'}</strong>
+              </span>
+            </div>
+            <div className="border border-slate-300 rounded overflow-hidden text-[9px]">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-950 text-white font-bold">
-                    <th className="py-0.5 px-2 w-1/3">Etapa</th>
-                    <th className="py-0.5 px-2 w-1/4">Prazo estimado</th>
-                    <th className="py-0.5 px-2 w-5/12">Dependência da Contratante</th>
+                    <th className="py-0.5 px-2 w-5/12">Etapa</th>
+                    <th className="py-0.5 px-2 w-3/12">Prazo estimado</th>
+                    <th className="py-0.5 px-2 w-4/12">Dependência da Contratante</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  <tr>
-                    <td className="py-0.5 px-2 font-medium">Kickoff e diagnóstico da operação</td>
-                    <td className="py-0.5 px-2 font-mono text-slate-800">2 a 3 dias úteis</td>
-                    <td className="py-0.5 px-2 text-slate-600">Acessos e contatos da equipe</td>
-                  </tr>
-                  <tr className="bg-slate-50">
-                    <td className="py-0.5 px-2 font-medium">Configuração, parametrização e migração</td>
-                    <td className="py-0.5 px-2 font-mono text-slate-800">5 dias úteis</td>
-                    <td className="py-0.5 px-2 text-slate-600">Envio de base e cadastros atuais</td>
-                  </tr>
-                  <tr>
-                    <td className="py-0.5 px-2 font-medium">Treinamento, validação e Go-Live</td>
-                    <td className="py-0.5 px-2 font-mono text-slate-800">Imediato</td>
-                    <td className="py-0.5 px-2 text-slate-600">Aprovação final dos fluxos e réguas</td>
-                  </tr>
+                  {proposal.serviceTrack === 'esteira-regua-n8n' ? (
+                    <>
+                      <tr>
+                        <td className="py-0.5 px-2 font-medium">Conexão da API WhatsApp e homologação Meta</td>
+                        <td className="py-0.5 px-2 font-mono text-slate-800">1 a 2 dias úteis</td>
+                        <td className="py-0.5 px-2 text-slate-600">Acessos e aprovação na Meta</td>
+                      </tr>
+                      <tr className="bg-slate-50">
+                        <td className="py-0.5 px-2 font-medium">Parametrização da Régua de Cobrança e mensagens</td>
+                        <td className="py-0.5 px-2 font-mono text-slate-800">até 3 dias úteis</td>
+                        <td className="py-0.5 px-2 text-slate-600">Aprovação dos modelos e templates</td>
+                      </tr>
+                      <tr>
+                        <td className="py-0.5 px-2 font-medium">Validação, testes e Go-Live dos envios</td>
+                        <td className="py-0.5 px-2 font-mono text-slate-800">1 dia útil</td>
+                        <td className="py-0.5 px-2 text-slate-600">Homologação final da Contratante</td>
+                      </tr>
+                    </>
+                  ) : (
+                    <>
+                      <tr>
+                        <td className="py-0.5 px-2 font-medium">Kickoff e diagnóstico operacional</td>
+                        <td className="py-0.5 px-2 font-mono font-semibold text-slate-800">de 1 a 3 dias úteis</td>
+                        <td className="py-0.5 px-2 text-slate-600">Alinhamento, acessos e contatos da equipe</td>
+                      </tr>
+                      <tr className="bg-slate-50">
+                        <td className="py-0.5 px-2 font-medium">Base de dados e validação (limpeza, preparação, validação e importação)</td>
+                        <td className="py-0.5 px-2 font-mono font-semibold text-slate-800">de 5 a 15 dias úteis</td>
+                        <td className="py-0.5 px-2 text-slate-600">Envio de base histórica e validação de cadastros</td>
+                      </tr>
+                      <tr>
+                        <td className="py-0.5 px-2 font-medium">Configurações</td>
+                        <td className="py-0.5 px-2 font-mono font-semibold text-slate-800">até 5 dias úteis</td>
+                        <td className="py-0.5 px-2 text-slate-600">Parametrização de conta, fiscal e réguas</td>
+                      </tr>
+                      <tr className="bg-slate-50">
+                        <td className="py-0.5 px-2 font-medium">Validação e Go-Live / Operação e treinamento</td>
+                        <td className="py-0.5 px-2 font-mono font-semibold text-slate-800">3 dias</td>
+                        <td className="py-0.5 px-2 text-slate-600">Homologação final e equipe disponível</td>
+                      </tr>
+                    </>
+                  )}
                 </tbody>
               </table>
             </div>
+            <p className="text-[8px] text-slate-500 italic">
+              * Tempo total estimado da implantação: <strong>20 dias</strong>. Somente régua de cobrança: <strong>até 5 dias úteis</strong>.
+            </p>
           </div>
 
           {/* SEÇÃO 5: NÍVEL DE SUPORTE (SLA) */}
@@ -457,7 +515,7 @@ export const AsaasProposalDoc: React.FC<AsaasProposalDocProps> = ({
             </h2>
             <div className="border border-slate-300 rounded p-1.5 bg-slate-50 text-[10px] space-y-0.5">
               <p className="text-slate-800">
-                <strong>Prazo Contratual:</strong> <strong className="text-slate-950 font-bold">☑ 12 (doze) meses</strong>, contados a partir da data de assinatura ({proposal.createdAt}).
+                <strong>Prazo Contratual:</strong> <strong className="text-slate-950 font-bold">☑ Tempo Indeterminado</strong> (Vigência por prazo indeterminado, sem vencimento preestabelecido; rescisão facultada mediante aviso prévio escrito de 30 dias).
               </p>
               <p className="text-slate-800">
                 <strong>Condições Especiais:</strong> Credenciamento oficial Multilagos junto à instituição financeira Asaas para suporte e homologação contínua.

@@ -1,0 +1,6 @@
+{
+  "name": "Multilagos - Simulador Comercial & Aceite Digital",
+  "description": "Plataforma comercial oficial da Multilagos (Negócios & Tecnologia) para diagnóstico empresarial, simulação dinâmica de propostas por faixas de clientes e aceite digital de contratos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DiagnosticSheetData, PlanId, ServiceTrack, BillingModel } from '../types';
 import { calculateDiagnosticMetrics, formatBRL, formatPercent } from '../utils/calculator';
 import { MultilagosLogo } from './MultilagosLogo';
@@ -9,7 +9,14 @@ import {
   ChevronDown,
   Users,
   Repeat,
-  FileText
+  FileText,
+  CreditCard,
+  Percent,
+  Check,
+  TrendingDown,
+  ShieldCheck,
+  Zap,
+  DollarSign
 } from 'lucide-react';
 
 interface DiagnosticToolProps {
@@ -24,8 +31,42 @@ export const DiagnosticTool: React.FC<DiagnosticToolProps> = ({
   onApplyRecommendation,
 }) => {
   const [showFullProjectionTable, setShowFullProjectionTable] = useState(false);
+  const [delinquencyMode, setDelinquencyMode] = useState<'count' | 'percent'>(
+    diagnosticData.delinquencyInputMode || 'count'
+  );
 
   const metrics = calculateDiagnosticMetrics(diagnosticData);
+
+  const formatPctToStr = (pct: number) => {
+    if (pct == null || pct <= 0) return '';
+    const rounded = Number(pct.toFixed(2));
+    return String(rounded).replace('.', ',');
+  };
+
+  const getInitialPercentStr = () => {
+    if (diagnosticData.delinquencyInputPercent != null && diagnosticData.delinquencyInputPercent > 0) {
+      return formatPctToStr(diagnosticData.delinquencyInputPercent);
+    }
+    if (diagnosticData.clientCount > 0 && diagnosticData.delinquentClientCount > 0) {
+      const pct = (diagnosticData.delinquentClientCount / diagnosticData.clientCount) * 100;
+      return formatPctToStr(pct);
+    }
+    return '';
+  };
+
+  const [percentInputStr, setPercentInputStr] = useState<string>(getInitialPercentStr);
+
+  // Sincronizar string percentual quando o modo é 'count' e o valor em clientes muda
+  useEffect(() => {
+    if (delinquencyMode === 'count') {
+      if (diagnosticData.clientCount > 0 && diagnosticData.delinquentClientCount > 0) {
+        const pct = (diagnosticData.delinquentClientCount / diagnosticData.clientCount) * 100;
+        setPercentInputStr(formatPctToStr(pct));
+      } else {
+        setPercentInputStr('');
+      }
+    }
+  }, [diagnosticData.delinquentClientCount, diagnosticData.clientCount, delinquencyMode]);
 
   const handleFieldChange = <K extends keyof DiagnosticSheetData>(
     field: K,
@@ -37,6 +78,115 @@ export const DiagnosticTool: React.FC<DiagnosticToolProps> = ({
     });
   };
 
+  const handleSwitchToCount = () => {
+    setDelinquencyMode('count');
+    handleFieldChange('delinquencyInputMode', 'count');
+  };
+
+  const handleSwitchToPercent = () => {
+    setDelinquencyMode('percent');
+    handleFieldChange('delinquencyInputMode', 'percent');
+    if (diagnosticData.clientCount > 0 && diagnosticData.delinquentClientCount > 0) {
+      const pct = (diagnosticData.delinquentClientCount / diagnosticData.clientCount) * 100;
+      setPercentInputStr(formatPctToStr(pct));
+    }
+  };
+
+  const handleDelinquentCountChange = (count: number) => {
+    const safeCount = Math.max(0, count);
+    const pct = diagnosticData.clientCount > 0 ? Number(((safeCount / diagnosticData.clientCount) * 100).toFixed(2)) : 0;
+    onUpdateDiagnostic({
+      ...diagnosticData,
+      delinquentClientCount: safeCount,
+      delinquencyInputMode: 'count',
+      delinquencyInputPercent: pct,
+    });
+  };
+
+  const handlePercentInputChange = (val: string) => {
+    // Permitir apenas dígitos, vírgula e ponto
+    let clean = val.replace(/[^0-9.,]/g, '');
+
+    // Evitar múltiplas vírgulas ou múltiplos pontos
+    const commaParts = clean.split(',');
+    if (commaParts.length > 2) {
+      clean = commaParts[0] + ',' + commaParts.slice(1).join('');
+    }
+    const dotParts = clean.split('.');
+    if (dotParts.length > 2) {
+      clean = dotParts[0] + '.' + dotParts.slice(1).join('');
+    }
+
+    setPercentInputStr(clean);
+
+    const normalized = clean.replace(',', '.');
+    const num = parseFloat(normalized);
+
+    if (!isNaN(num) && num >= 0) {
+      const clientBase = diagnosticData.clientCount || 1;
+      const count = Math.round((num / 100) * clientBase);
+      onUpdateDiagnostic({
+        ...diagnosticData,
+        delinquentClientCount: count,
+        delinquencyInputMode: 'percent',
+        delinquencyInputPercent: num,
+      });
+    } else if (clean === '') {
+      onUpdateDiagnostic({
+        ...diagnosticData,
+        delinquentClientCount: 0,
+        delinquencyInputMode: 'percent',
+        delinquencyInputPercent: 0,
+      });
+    }
+  };
+
+  const handlePercentInputBlur = () => {
+    if (percentInputStr.endsWith(',') || percentInputStr.endsWith('.')) {
+      setPercentInputStr(percentInputStr.slice(0, -1));
+    }
+  };
+
+  const handleClientCountChange = (newCount: number) => {
+    const safeCount = Math.max(0, newCount);
+    if (delinquencyMode === 'percent') {
+      const normalized = percentInputStr.replace(',', '.');
+      const num = parseFloat(normalized);
+      const pct = !isNaN(num) && num > 0 ? num : (diagnosticData.delinquencyInputPercent || 0);
+      const delinqCount = Math.round((pct / 100) * safeCount);
+      onUpdateDiagnostic({
+        ...diagnosticData,
+        clientCount: safeCount,
+        delinquentClientCount: delinqCount,
+      });
+    } else {
+      onUpdateDiagnostic({
+        ...diagnosticData,
+        clientCount: safeCount,
+      });
+    }
+  };
+
+  const handlePaymentMethodToggle = (method: 'pix' | 'boleto' | 'creditCard' | 'debitCard', checked: boolean) => {
+    onUpdateDiagnostic({
+      ...diagnosticData,
+      paymentMethods: {
+        ...diagnosticData.paymentMethods,
+        [method]: checked,
+      },
+    });
+  };
+
+  const handlePaymentFeeChange = (field: 'pixFee' | 'boletoFee' | 'creditCardFee' | 'debitCardFee', value: number) => {
+    onUpdateDiagnostic({
+      ...diagnosticData,
+      paymentMethods: {
+        ...diagnosticData.paymentMethods,
+        [field]: value,
+      },
+    });
+  };
+
   const handleResetDefaults = () => {
     onUpdateDiagnostic({
       companyName: '',
@@ -44,6 +194,8 @@ export const DiagnosticTool: React.FC<DiagnosticToolProps> = ({
       monthlyRevenue: 30000,
       clientCount: 130,
       delinquentClientCount: 10,
+      delinquencyInputMode: 'count',
+      delinquencyInputPercent: 7.69,
       newClientsPerMonth: 5,
       churnClientsPerMonth: 3,
       issuesNfse: 'sim',
@@ -52,17 +204,22 @@ export const DiagnosticTool: React.FC<DiagnosticToolProps> = ({
       financialTeamSize: 3,
       paymentMethods: {
         pix: true,
-        pixFee: 0,
+        pixFee: 1.50,
+        pixFeeType: 'fixed',
         boleto: true,
-        boletoFee: 0,
+        boletoFee: 3.50,
         creditCard: true,
+        creditCardFee: 3.99,
         debitCard: false,
+        debitCardFee: 1.99,
       },
       currentSystem: '',
       collectionMethodNotes: 'Cobrança manual e envio avulso',
       hoursSpentPerWeek: 8,
       reductionGoalPercent: 80,
     });
+    setPercentInputStr('7,7');
+    setDelinquencyMode('count');
   };
 
   const teamSizes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
@@ -161,21 +318,69 @@ export const DiagnosticTool: React.FC<DiagnosticToolProps> = ({
                   <input
                     type="number"
                     value={diagnosticData.clientCount || ''}
-                    onChange={(e) => handleFieldChange('clientCount', Number(e.target.value))}
+                    onChange={(e) => handleClientCountChange(Number(e.target.value))}
                     className="w-full px-3 py-2 bg-[#111F24] border border-slate-700 rounded-lg text-white font-mono font-bold focus:ring-1 focus:ring-[#D40B3A] focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="text-slate-300 font-semibold block mb-1">
-                    Inadimplentes:
-                  </label>
-                  <input
-                    type="number"
-                    value={diagnosticData.delinquentClientCount || ''}
-                    onChange={(e) => handleFieldChange('delinquentClientCount', Number(e.target.value))}
-                    className="w-full px-3 py-2 bg-[#111F24] border border-slate-700 rounded-lg text-white font-mono font-bold focus:ring-1 focus:ring-[#D40B3A] focus:outline-none"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-slate-300 font-semibold">
+                      Inadimplência:
+                    </label>
+                    <div className="flex items-center bg-[#111F24] border border-slate-700 rounded-md p-0.5 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={handleSwitchToCount}
+                        className={`px-2 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                          delinquencyMode === 'count' ? 'bg-[#D40B3A] text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                        title="Informar quantidade exata de clientes em atraso"
+                      >
+                        Qtd
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSwitchToPercent}
+                        className={`px-2 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                          delinquencyMode === 'percent' ? 'bg-[#D40B3A] text-white' : 'text-slate-400 hover:text-white'
+                        }`}
+                        title="Informar percentual (%) estimado de inadimplência"
+                      >
+                        %
+                      </button>
+                    </div>
+                  </div>
+
+                  {delinquencyMode === 'count' ? (
+                    <div className="relative">
+                      <input
+                        type="number"
+                        placeholder="10"
+                        value={diagnosticData.delinquentClientCount || ''}
+                        onChange={(e) => handleDelinquentCountChange(Number(e.target.value))}
+                        className="w-full px-3 py-2 pr-12 bg-[#111F24] border border-slate-700 rounded-lg text-white font-mono font-bold focus:ring-1 focus:ring-[#D40B3A] focus:outline-none"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 font-mono">
+                        clientes
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="Ex: 7,5 ou 15"
+                        value={percentInputStr}
+                        onChange={(e) => handlePercentInputChange(e.target.value)}
+                        onBlur={handlePercentInputBlur}
+                        className="w-full px-3 py-2 pr-8 bg-[#111F24] border border-slate-700 rounded-lg text-white font-mono font-bold focus:ring-1 focus:ring-[#D40B3A] focus:outline-none"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-[#D40B3A] font-mono">
+                        %
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -183,15 +388,131 @@ export const DiagnosticTool: React.FC<DiagnosticToolProps> = ({
               <div className="p-3 rounded-xl bg-[#111F24] border border-red-900/60 flex items-center justify-between">
                 <div>
                   <span className="text-[11px] text-slate-400 block">% de Inadimplência Calculada:</span>
-                  <span className="text-base font-extrabold text-[#D40B3A] font-mono">
-                    {formatPercent(metrics.delinquencyRate)}
-                  </span>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-base font-extrabold text-[#D40B3A] font-mono">
+                      {formatPercent(metrics.delinquencyRate)}
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      ({diagnosticData.delinquentClientCount || 0} clientes)
+                    </span>
+                  </div>
                 </div>
                 <div className="text-right">
                   <span className="text-[11px] text-slate-400 block">Total Atrasado / Mês:</span>
                   <span className="text-base font-extrabold text-white font-mono">
                     {formatBRL(metrics.delinquencyAmount)}
                   </span>
+                </div>
+              </div>
+
+              {/* Pergunta Nova: Formas de Pagamento & Custos Atuais de Recebimento */}
+              <div className="p-3.5 rounded-xl bg-[#111F24] border border-slate-700/80 space-y-2.5">
+                <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
+                  <label className="text-slate-200 font-bold flex items-center gap-1.5 text-xs">
+                    <CreditCard className="w-3.5 h-3.5 text-[#D40B3A]" />
+                    <span>Formas de Pagamento & Custos Atuais</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400">Marque as que utiliza e o custo p/ receber</span>
+                </div>
+
+                <div className="space-y-2">
+                  {/* Pix */}
+                  <div className={`p-2 rounded-lg border transition-all ${
+                    diagnosticData.paymentMethods?.pix ? 'bg-[#16242A] border-slate-700' : 'bg-[#111F24]/50 border-slate-800/60 opacity-60'
+                  }`}>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={diagnosticData.paymentMethods?.pix ?? true}
+                          onChange={(e) => handlePaymentMethodToggle('pix', e.target.checked)}
+                          className="w-4 h-4 rounded text-[#D40B3A] accent-[#D40B3A] cursor-pointer"
+                        />
+                        <span className="text-xs font-bold text-white">Pix</span>
+                      </label>
+
+                      {diagnosticData.paymentMethods?.pix && (
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <span className="text-[11px] text-slate-400">Custo p/ receber:</span>
+                          <span className="text-slate-400 text-xs font-bold font-mono">R$</span>
+                          <input
+                            type="number"
+                            step="0.05"
+                            placeholder="1.50"
+                            value={diagnosticData.paymentMethods?.pixFee ?? 1.50}
+                            onChange={(e) => handlePaymentFeeChange('pixFee', Number(e.target.value))}
+                            className="w-18 px-2 py-0.5 bg-[#111F24] border border-slate-700 rounded text-white font-mono font-bold text-xs focus:ring-1 focus:ring-[#D40B3A]"
+                          />
+                          <span className="text-[10px] text-slate-500">/tx</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Boleto Bancário */}
+                  <div className={`p-2 rounded-lg border transition-all ${
+                    diagnosticData.paymentMethods?.boleto ? 'bg-[#16242A] border-slate-700' : 'bg-[#111F24]/50 border-slate-800/60 opacity-60'
+                  }`}>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={diagnosticData.paymentMethods?.boleto ?? true}
+                          onChange={(e) => handlePaymentMethodToggle('boleto', e.target.checked)}
+                          className="w-4 h-4 rounded text-[#D40B3A] accent-[#D40B3A] cursor-pointer"
+                        />
+                        <span className="text-xs font-bold text-white">Boleto Bancário</span>
+                      </label>
+
+                      {diagnosticData.paymentMethods?.boleto && (
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <span className="text-[11px] text-slate-400">Custo p/ boleto:</span>
+                          <span className="text-slate-400 text-xs font-bold font-mono">R$</span>
+                          <input
+                            type="number"
+                            step="0.10"
+                            placeholder="3.50"
+                            value={diagnosticData.paymentMethods?.boletoFee ?? 3.50}
+                            onChange={(e) => handlePaymentFeeChange('boletoFee', Number(e.target.value))}
+                            className="w-18 px-2 py-0.5 bg-[#111F24] border border-slate-700 rounded text-white font-mono font-bold text-xs focus:ring-1 focus:ring-[#D40B3A]"
+                          />
+                          <span className="text-[10px] text-slate-500">/liquidado</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Cartão de Crédito */}
+                  <div className={`p-2 rounded-lg border transition-all ${
+                    diagnosticData.paymentMethods?.creditCard ? 'bg-[#16242A] border-slate-700' : 'bg-[#111F24]/50 border-slate-800/60 opacity-60'
+                  }`}>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={diagnosticData.paymentMethods?.creditCard ?? true}
+                          onChange={(e) => handlePaymentMethodToggle('creditCard', e.target.checked)}
+                          className="w-4 h-4 rounded text-[#D40B3A] accent-[#D40B3A] cursor-pointer"
+                        />
+                        <span className="text-xs font-bold text-white">Cartão de Crédito</span>
+                      </label>
+
+                      {diagnosticData.paymentMethods?.creditCard && (
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <span className="text-[11px] text-slate-400">Taxa média:</span>
+                          <input
+                            type="number"
+                            step="0.10"
+                            placeholder="3.99"
+                            value={diagnosticData.paymentMethods?.creditCardFee ?? 3.99}
+                            onChange={(e) => handlePaymentFeeChange('creditCardFee', Number(e.target.value))}
+                            className="w-16 px-2 py-0.5 bg-[#111F24] border border-slate-700 rounded text-white font-mono font-bold text-xs focus:ring-1 focus:ring-[#D40B3A]"
+                          />
+                          <span className="text-slate-400 text-xs font-bold font-mono">%</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -435,6 +756,88 @@ export const DiagnosticTool: React.FC<DiagnosticToolProps> = ({
                   {formatBRL(metrics.monthlyRecoveredCash)}
                 </p>
                 <span className="text-[10px] text-slate-400">direto no caixa</span>
+              </div>
+            </div>
+
+            {/* Comparativo de Custos de Recebimento (Tarifas Bancárias) */}
+            <div className="bg-[#16242A] border border-slate-700/80 rounded-2xl p-5 space-y-4 shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-700 gap-2">
+                <div>
+                  <span className="text-xs font-bold text-[#D40B3A] uppercase tracking-wider flex items-center gap-1.5">
+                    <CreditCard className="w-3.5 h-3.5" />
+                    <span>Comparativo de Custos de Recebimento (Tarifas Bancárias)</span>
+                  </span>
+                  <h4 className="text-base font-bold text-white font-display mt-0.5">
+                    Custo Atual do Cliente vs Nossa Solução (Asaas)
+                  </h4>
+                </div>
+                <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-950/80 px-2.5 py-1 rounded-md border border-emerald-800/80 flex items-center gap-1 self-start sm:self-auto">
+                  <TrendingDown className="w-3.5 h-3.5" />
+                  <span>Economia de {metrics.feeComparison.savingsPercent.toFixed(0)}% nas tarifas</span>
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div className="p-3.5 rounded-xl bg-[#111F24] border border-red-900/50">
+                  <span className="text-[11px] text-slate-400 block">Custo Médio Atual do Cliente:</span>
+                  <p className="text-lg font-extrabold text-red-400 font-mono mt-0.5">
+                    {formatBRL(metrics.feeComparison.currentMonthlyCost)}
+                    <span className="text-xs text-slate-400 font-normal"> /mês</span>
+                  </p>
+                  <span className="text-[10px] text-slate-500">
+                    Tarifas informadas pelo cliente
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-[#111F24] border border-emerald-900/60">
+                  <span className="text-[11px] text-slate-400 block">Custo com a Multilagos (Asaas):</span>
+                  <p className="text-lg font-extrabold text-emerald-400 font-mono mt-0.5">
+                    {formatBRL(metrics.feeComparison.multilagosMonthlyCost)}
+                    <span className="text-xs text-slate-400 font-normal"> /mês</span>
+                  </p>
+                  <span className="text-[10px] text-emerald-400">
+                    Pix R$ 0,99 · Boleto R$ 1,89 · Cartão 2,93%
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-gradient-to-br from-[#1D2F37] to-[#16242A] border border-emerald-700/80">
+                  <span className="text-[11px] text-emerald-300 font-bold block">Economia Direta em Tarifas:</span>
+                  <p className="text-lg font-extrabold text-emerald-300 font-mono mt-0.5">
+                    +{formatBRL(metrics.feeComparison.monthlySavings)}
+                    <span className="text-xs text-emerald-400 font-normal"> /mês</span>
+                  </p>
+                  <span className="text-[10px] font-mono text-emerald-300 font-semibold block">
+                    +{formatBRL(metrics.feeComparison.annualSavings)} / ano no caixa
+                  </span>
+                </div>
+              </div>
+
+              {/* Mini breakdown table */}
+              <div className="overflow-x-auto pt-1">
+                <table className="w-full text-left border-collapse text-[11px]">
+                  <thead>
+                    <tr className="bg-[#111F24] text-slate-300 font-semibold border-b border-slate-700">
+                      <th className="py-1.5 px-2.5">Método</th>
+                      <th className="py-1.5 px-2 text-center">Transações</th>
+                      <th className="py-1.5 px-2 text-right">Taxa Atual Cliente</th>
+                      <th className="py-1.5 px-2 text-right text-emerald-400">Nossa Taxa (Asaas)</th>
+                      <th className="py-1.5 px-2.5 text-right text-emerald-300">Economia / Mês</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/80 font-mono">
+                    {metrics.feeComparison.details.filter((d) => d.active).map((d) => (
+                      <tr key={d.method} className="bg-[#142026]">
+                        <td className="py-1.5 px-2.5 font-sans font-medium text-slate-200">{d.method}</td>
+                        <td className="py-1.5 px-2 text-center text-slate-400">~{d.transactions}/mês</td>
+                        <td className="py-1.5 px-2 text-right text-slate-300">{d.clientRateText} ({formatBRL(d.clientCost)})</td>
+                        <td className="py-1.5 px-2 text-right text-emerald-400 font-bold">{d.multilagosRateText} ({formatBRL(d.multilagosCost)})</td>
+                        <td className="py-1.5 px-2.5 text-right text-emerald-300 font-bold">
+                          {d.difference > 0 ? `+${formatBRL(d.difference)}` : 'R$ 0,00'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
 

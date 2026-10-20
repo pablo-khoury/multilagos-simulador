@@ -64,8 +64,8 @@ export const MasterContractDoc: React.FC<MasterContractDocProps> = ({
               <div>Data de Emissão</div>
             </div>
             <div className="grid grid-cols-3 bg-slate-50 text-slate-900 font-mono text-center py-1 px-2 text-xs font-semibold border-t border-slate-300">
-              <div>{proposal.contractMasterId}</div>
-              <div>1.0 (Oficial)</div>
+              <div>{proposal.contractMasterId || 'MSA-2026-001'}</div>
+              <div>2.0 (Oficial Atualizado)</div>
               <div>{isSigned && signatureData.signedAt ? signatureData.signedAt.split(' ')[0] : proposal.createdAt}</div>
             </div>
           </div>

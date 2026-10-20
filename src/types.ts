@@ -29,26 +29,51 @@ export type PaymentFrequency = 'mensal' | 'semestral' | 'anual';
 
 export type BillingModel = 'recorrente' | 'parcelamento' | 'avulso' | 'misto';
 
+export interface ClientPricingTierPlanPrices {
+  monthlyPrice: number;
+  setupPrice: number;
+}
+
+export interface ClientPricingTier {
+  id: string;
+  minClients: number;
+  maxClients: number;
+  label: string;
+  plans: {
+    essencial: ClientPricingTierPlanPrices;
+    pro: ClientPricingTierPlanPrices;
+    performance: ClientPricingTierPlanPrices;
+    personalizado: ClientPricingTierPlanPrices;
+  };
+}
+
+export interface DiagnosticPaymentMethods {
+  pix: boolean;
+  pixFee: number; // R$ por pix ou %
+  pixFeeType?: 'fixed' | 'percent';
+  boleto: boolean;
+  boletoFee: number; // R$ por boleto liquidado
+  creditCard: boolean;
+  creditCardFee?: number; // % taxa média cartão de crédito
+  debitCard: boolean;
+  debitCardFee?: number; // % taxa média cartão de débito
+}
+
 export interface DiagnosticSheetData {
   companyName: string;
   segment: string;
   monthlyRevenue: number;
   clientCount: number;
   delinquentClientCount: number;
+  delinquencyInputMode?: 'count' | 'percent';
+  delinquencyInputPercent?: number;
   newClientsPerMonth: number;
   churnClientsPerMonth: number;
   issuesNfse: 'sim' | 'nao' | 'manual';
   hasCommissionOrSplit: 'sim' | 'nao';
   billingModel: BillingModel;
   financialTeamSize: number; // 1 to 10 or 11 (+10)
-  paymentMethods: {
-    pix: boolean;
-    pixFee: number;
-    boleto: boolean;
-    boletoFee: number;
-    creditCard: boolean;
-    debitCard: boolean;
-  };
+  paymentMethods: DiagnosticPaymentMethods;
   currentSystem: string;
   collectionMethodNotes: string;
   hoursSpentPerWeek: number;
@@ -125,6 +150,17 @@ export interface ProposalFinancials {
   dueDay: number;
 }
 
+export interface ContractServiceItem {
+  id: string;
+  name: string;
+  category: 'asaas' | 'regua-n8n' | 'consultoria' | 'custom';
+  planId?: PlanId;
+  setupPrice: number;
+  monthlyPrice: number;
+  description?: string;
+  features?: string[];
+}
+
 export interface CommercialProposal {
   id: string; // ex: PROP-2026-104
   contractMasterId: string; // ex: MSA-2026-104
@@ -137,6 +173,8 @@ export interface CommercialProposal {
   
   serviceTrack: ServiceTrack;
   planId: PlanId;
+  selectedServices?: ContractServiceItem[];
+  contractDurationText?: string; // ex: 'Tempo Indeterminado (sem vencimento preestabelecido)'
   
   clientInfo: ClientInfo;
   diagnosticData?: DiagnosticSheetData;
@@ -150,6 +188,19 @@ export interface CommercialProposal {
 
   signature: DigitalSignatureData;
   asaasBilling?: AsaasBillingResult;
+
+  googleDriveLinks?: {
+    proposalPdfUrl?: string;
+    contractPdfUrl?: string;
+    folderUrl?: string;
+    folderId?: string;
+    syncedAt?: string;
+  };
+  googleSheetSync?: {
+    spreadsheetId?: string;
+    spreadsheetUrl?: string;
+    syncedAt?: string;
+  };
 }
 
 export type ActiveAppTab = 'simulador' | 'cliente_aceite' | 'admin';

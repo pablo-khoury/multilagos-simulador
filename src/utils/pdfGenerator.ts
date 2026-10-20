@@ -10,10 +10,12 @@ import html2canvas from 'html2canvas';
  * - Headers and footers on every single page
  * - 100% reliable download via standard Blob & jsPDF save
  */
-export async function exportElementToPdf(
-  elementOrId: string | HTMLElement,
-  filename: string
-): Promise<boolean> {
+/**
+ * Generates the jsPDF instance and raw Blob for a given HTML element.
+ */
+export async function generateElementPdfBlob(
+  elementOrId: string | HTMLElement
+): Promise<{ pdf: jsPDF; blob: Blob } | null> {
   let container: HTMLElement | null = null;
 
   if (typeof elementOrId === 'string') {
@@ -24,17 +26,15 @@ export async function exportElementToPdf(
 
   if (!container) {
     console.error(`[PDF Export] Elemento '${String(elementOrId)}' não encontrado no DOM.`);
-    return false;
+    return null;
   }
 
   try {
-    // If container is hidden via display: none, temporarily display it
     const originalDisplay = container.style.display;
     if (originalDisplay === 'none') {
       container.style.display = 'block';
     }
 
-    // Find all discrete .pdf-page elements within the document container
     let pageElements = Array.from(container.querySelectorAll<HTMLElement>('.pdf-page'));
 
     if (pageElements.length === 0 && container.classList.contains('pdf-page')) {
@@ -55,10 +55,8 @@ export async function exportElementToPdf(
 
     for (let i = 0; i < pageElements.length; i++) {
       const pageEl = pageElements[i];
-
       let imgData = '';
 
-      // Primary engine: html-to-image (native foreignObject rendering - supports Tailwind v4, oklch, color-mix)
       try {
         imgData = await toJpeg(pageEl, {
           quality: 0.98,
@@ -70,7 +68,6 @@ export async function exportElementToPdf(
         });
       } catch (err) {
         console.warn(`[PDF Export] toJpeg falhou na página ${i + 1}, tentando html2canvas fallback:`, err);
-        // Fallback engine: html2canvas
         const canvas = await html2canvas(pageEl, {
           scale: 2.0,
           useCORS: true,
@@ -86,24 +83,38 @@ export async function exportElementToPdf(
         pdf.addPage('a4', 'portrait');
       }
 
-      // Exact A4 dimensions in mm: 210 x 297
       pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
     }
 
-    // Restore original display
     if (originalDisplay === 'none') {
       container.style.display = originalDisplay;
     }
 
+    const blob = pdf.output('blob');
+    return { pdf, blob };
+  } catch (err) {
+    console.error('[PDF Export] Erro ao gerar Blob do PDF:', err);
+    return null;
+  }
+}
+
+export async function exportElementToPdf(
+  elementOrId: string | HTMLElement,
+  filename: string
+): Promise<{ success: boolean; blob?: Blob }> {
+  try {
+    const generated = await generateElementPdfBlob(elementOrId);
+    if (!generated) {
+      return { success: false };
+    }
+
     const cleanFilename = filename.toLowerCase().endsWith('.pdf') ? filename : `${filename}.pdf`;
+    triggerBrowserPdfDownload(generated.pdf, cleanFilename);
 
-    // Download execution with dual strategies
-    triggerBrowserPdfDownload(pdf, cleanFilename);
-
-    return true;
+    return { success: true, blob: generated.blob };
   } catch (error) {
     console.error('[PDF Export] Falha geral ao exportar PDF:', error);
-    return false;
+    return { success: false };
   }
 }
 

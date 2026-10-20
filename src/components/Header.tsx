@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { Menu, X, ArrowRight, ShieldCheck, Sliders, Eye, FileText } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Menu, X, ArrowRight, ShieldCheck, Sliders, Eye, FileText, Table } from 'lucide-react';
 import { ActiveAppTab } from '../types';
 import { MultilagosLogo } from './MultilagosLogo';
+import { initAuth, googleSignIn, getSavedGoogleUser, SavedGoogleUser } from '../services/googleAuth';
+import { User } from 'firebase/auth';
 
 interface HeaderProps {
   currentTab: ActiveAppTab;
@@ -17,6 +19,37 @@ export const Header: React.FC<HeaderProps> = ({
   isClientDirectAccess = false 
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const [googleUser, setGoogleUser] = useState<User | SavedGoogleUser | null>(() => getSavedGoogleUser());
+  const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
+
+  useEffect(() => {
+    const unsub = initAuth(
+      (user) => setGoogleUser(user),
+      () => {
+        if (!getSavedGoogleUser()) {
+          setGoogleUser(null);
+        }
+      }
+    );
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+
+  const handleConnectGoogle = async () => {
+    try {
+      setIsConnectingGoogle(true);
+      const res = await googleSignIn();
+      if (res?.user) {
+        setGoogleUser(res.user);
+      }
+    } catch (e) {
+      console.error('Falha ao conectar Google:', e);
+    } finally {
+      setIsConnectingGoogle(false);
+    }
+  };
 
   const handleNavClick = (tab: ActiveAppTab) => {
     onSelectTab(tab);
@@ -97,8 +130,30 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </nav>
 
-          {/* Action button */}
+          {/* Action button & Google Workspace Status */}
           <div className="hidden sm:flex items-center gap-3">
+            {googleUser ? (
+              <div 
+                className="hidden xl:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-950/60 border border-emerald-800 text-xs text-emerald-300"
+                title={`Conectado como ${googleUser.email || 'Conta Google'}`}
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                <span className="font-semibold truncate max-w-[140px]">
+                  {googleUser.email || 'Google Conectado'}
+                </span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleConnectGoogle}
+                disabled={isConnectingGoogle}
+                className="hidden xl:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-950/60 hover:bg-blue-900 border border-blue-800 text-xs text-blue-300 transition-all cursor-pointer shadow-sm"
+              >
+                <Table className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                <span>{isConnectingGoogle ? 'Conectando...' : 'Conectar Google'}</span>
+              </button>
+            )}
+
             <button
               onClick={() => handleNavClick(currentTab === 'simulador' ? 'cliente_aceite' : 'simulador')}
               className="inline-flex items-center justify-center gap-2 px-5 py-2.5 text-xs font-bold text-white bg-[#D40B3A] hover:bg-[#B50931] rounded-xl transition-all shadow-md active:scale-98 cursor-pointer"

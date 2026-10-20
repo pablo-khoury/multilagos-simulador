@@ -20,14 +20,16 @@ import {
   PlanId,
   ServiceTrack,
   DiagnosticSheetData,
-  ProposalFinancials
+  ProposalFinancials,
+  ClientPricingTier
 } from './types';
 
 import { 
   MULTILAGOS_INFO, 
   DEFAULT_ASAAS_CONFIG, 
   ALL_INITIAL_PLANS, 
-  INITIAL_DIAGNOSTIC_SHEET 
+  INITIAL_DIAGNOSTIC_SHEET,
+  DEFAULT_CLIENT_PRICING_TIERS
 } from './data/mockData';
 
 import { 
@@ -42,6 +44,7 @@ const STORAGE_KEYS = {
   ASAAS: 'multilagos_asaas_config_v3',
   ACTIVE_PROPOSAL: 'multilagos_active_proposal_v3',
   DIAGNOSTIC: 'multilagos_diagnostic_sheet_v3',
+  PRICING_TIERS: 'multilagos_pricing_tiers_v4',
 };
 
 export default function App() {
@@ -61,6 +64,19 @@ export default function App() {
   const [asaasConfig, setAsaasConfig] = useState<AsaasConfig>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.ASAAS);
     return saved ? JSON.parse(saved) : DEFAULT_ASAAS_CONFIG;
+  });
+
+  const [pricingTiers, setPricingTiers] = useState<ClientPricingTier[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.PRICING_TIERS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length >= DEFAULT_CLIENT_PRICING_TIERS.length) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return DEFAULT_CLIENT_PRICING_TIERS;
   });
 
   // Diagnostic sheet data
@@ -123,7 +139,8 @@ export default function App() {
 
       diagnosticData: INITIAL_DIAGNOSTIC_SHEET,
       financials: initialFinancials,
-      minimumContractMonths: 12,
+      minimumContractMonths: 0,
+      contractDurationText: 'Tempo Indeterminado (sem vencimento preestabelecido)',
       startDate: getFormattedCurrentDate(),
 
       signature: {
@@ -253,6 +270,13 @@ export default function App() {
     }));
   };
 
+  const handleUpdateSelectedServices = (services: any[]) => {
+    setActiveProposal((prev) => ({
+      ...prev,
+      selectedServices: services,
+    }));
+  };
+
   // Admin save handlers
   const handleSavePlans = (updated: Plan[]) => {
     setPlans(updated);
@@ -264,10 +288,16 @@ export default function App() {
     localStorage.setItem(STORAGE_KEYS.ASAAS, JSON.stringify(updated));
   };
 
+  const handleSavePricingTiers = (updated: ClientPricingTier[]) => {
+    setPricingTiers(updated);
+    localStorage.setItem(STORAGE_KEYS.PRICING_TIERS, JSON.stringify(updated));
+  };
+
   const handleResetDefaults = () => {
     if (confirm('Deseja restaurar as configurações e planos originais da Multilagos?')) {
       localStorage.clear();
       setPlans(ALL_INITIAL_PLANS);
+      setPricingTiers(DEFAULT_CLIENT_PRICING_TIERS);
       setAsaasConfig(DEFAULT_ASAAS_CONFIG);
       setDiagnosticData(INITIAL_DIAGNOSTIC_SHEET);
       alert('Padrões restaurados com sucesso.');
@@ -303,6 +333,7 @@ export default function App() {
             {/* 2. Proposal Preparation & Discount Adjuster */}
             <ProposalSimulator
               plans={plans}
+              pricingTiers={pricingTiers}
               selectedServiceTrack={selectedTrack}
               selectedPlanId={selectedPlanId}
               activeProposal={activeProposal}
@@ -313,6 +344,7 @@ export default function App() {
               onUpdateNotes={(notes) => setActiveProposal((prev) => ({ ...prev, notes }))}
               onUpdateCustomFeatures={handleUpdateCustomFeatures}
               onUpdateDiagnostic={handleUpdateDiagnostic}
+              onUpdateSelectedServices={handleUpdateSelectedServices}
               onProceedToClientAcceptance={() => {
                 setCurrentTab('cliente_aceite');
                 window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -340,9 +372,11 @@ export default function App() {
         {currentTab === 'admin' && (
           <AdminPanel
             plans={plans}
+            pricingTiers={pricingTiers}
             asaasConfig={asaasConfig}
             diagnosticData={diagnosticData}
             onSavePlans={handleSavePlans}
+            onSavePricingTiers={handleSavePricingTiers}
             onSaveAsaasConfig={handleSaveAsaasConfig}
             onSaveDiagnosticData={(data) => {
               setDiagnosticData(data);
