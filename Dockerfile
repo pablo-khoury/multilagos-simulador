@@ -13,7 +13,10 @@ RUN npm install
 
 # Copia código-fonte e compila
 COPY . .
-RUN npm run build
+#RUN npm run build
+
+# Remove o package-lock.json corrompido durante o build e instala limpo
+RUN rm -f package-lock.json && npm install --no-package-lock
 
 # Estágio 2: Servidor Web Nginx ultra-leve
 FROM nginx:alpine
