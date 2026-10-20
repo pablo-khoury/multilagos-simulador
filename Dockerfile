@@ -9,14 +9,16 @@ WORKDIR /app
 
 # Copia dependências e instala
 COPY package*.json ./
-RUN npm install
-
-# Copia código-fonte e compila
-COPY . .
-#RUN npm run build
+#RUN npm install
 
 # Remove o package-lock.json corrompido durante o build e instala limpo
 RUN rm -f package-lock.json && npm install --no-package-lock
+
+# Copia código-fonte e compila
+COPY . .
+RUN npm run build
+
+
 
 # Estágio 2: Servidor Web Nginx ultra-leve
 FROM nginx:alpine
