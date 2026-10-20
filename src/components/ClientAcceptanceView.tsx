@@ -25,6 +25,11 @@ import {
   appendProposalRowToSheet, 
   ProposalSheetRecord 
 } from '../services/googleWorkspace';
+import {
+  saveContractToHistory,
+  saveClientFormDraft,
+  getClientFormDraft,
+} from '../services/contractHistoryService';
 
 import { 
   ShieldCheck, 
@@ -349,10 +354,22 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
       }
       setDownloadingContractPdf(false);
 
-      setDownloadNotice('✓ Contrato e Proposta assinados e salvos com sucesso!');
+      // 3. PERSIST LOCALLY: Save all client info, signature verification, and PDF files
+      // in persistent offline storage (IndexedDB + localStorage) so consultant can download anytime
+      try {
+        await saveContractToHistory(
+          baseUpdatedProposal,
+          resProp.blob || undefined,
+          resContract.blob || undefined
+        );
+      } catch (saveErr) {
+        console.warn('[Contract Archive] Erro ao gravar histórico local:', saveErr);
+      }
+
+      setDownloadNotice('✓ Contrato e Proposta salvos com sucesso no histórico do sistema!');
       setTimeout(() => setDownloadNotice(''), 7000);
 
-      // 3. AT THE EXACT SAME TIME: Automatically send to Google Drive & Google Sheets!
+      // 4. AT THE EXACT SAME TIME: Automatically send to Google Drive & Google Sheets (if connected)!
       if (resProp.blob && resContract.blob) {
         sendDirectlyToGoogleWorkspace(
           resProp.blob,

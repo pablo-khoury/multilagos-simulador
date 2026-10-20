@@ -1,20 +1,29 @@
+# -------------------------------------------------------------
+# Dockerfile Multi-stage para Produção no Easypanel / VPS Hostinger
+# -------------------------------------------------------------
+
+# Estágio 1: Build da aplicação React + Vite
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copia os arquivos de dependência
+# Copia dependências e instala
 COPY package*.json ./
+RUN npm install
 
-# Habilita o Yarn de forma nativa e instala as dependências sem os bugs do npm
-RUN corepack enable && corepack prepare yarn@stable --activate
-RUN yarn install
-
-# Copia o restante do código e compila o projeto
+# Copia código-fonte e compila
 COPY . .
-RUN yarn build
+RUN npm run build
 
-# Estágio final com Nginx para servir a aplicação
+# Estágio 2: Servidor Web Nginx ultra-leve
 FROM nginx:alpine
+
+# Copia build estático
 COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Copia configuração do Nginx com suporte a SPA
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
 EXPOSE 80
+
 CMD ["nginx", "-g", "daemon off;"]

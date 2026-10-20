@@ -9,7 +9,105 @@ import {
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+export interface CustomFirebaseConfig {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket?: string;
+  messagingSenderId?: string;
+  appId: string;
+  oAuthClientId?: string;
+}
+
+export interface FirebaseErrorInfo {
+  title: string;
+  message: string;
+  code: string;
+  isConfigIssue: boolean;
+}
+
+const STORAGE_KEY_TOKEN = 'multilagos_google_workspace_token';
+const STORAGE_KEY_TIME = 'multilagos_google_token_time';
+const STORAGE_KEY_USER = 'multilagos_google_user';
+const STORAGE_KEY_CUSTOM_CONFIG = 'multilagos_custom_firebase_config';
+
+/**
+ * Returns effective Firebase configuration following precedence:
+ * 1. Custom config in localStorage (configured via Admin Panel)
+ * 2. Environment variables (VITE_FIREBASE_*)
+ * 3. Default fallback from firebase-applet-config.json
+ */
+export const getEffectiveFirebaseConfig = (): CustomFirebaseConfig => {
+  // 1. Check localStorage for consultant/admin override
+  try {
+    const custom = localStorage.getItem(STORAGE_KEY_CUSTOM_CONFIG);
+    if (custom) {
+      const parsed = JSON.parse(custom);
+      if (parsed.apiKey && parsed.projectId) {
+        return {
+          apiKey: String(parsed.apiKey).trim(),
+          authDomain: String(parsed.authDomain || `${parsed.projectId}.firebaseapp.com`).trim(),
+          projectId: String(parsed.projectId).trim(),
+          storageBucket: String(parsed.storageBucket || `${parsed.projectId}.appspot.com`).trim(),
+          messagingSenderId: String(parsed.messagingSenderId || '').trim(),
+          appId: String(parsed.appId || '').trim(),
+          oAuthClientId: String(parsed.oAuthClientId || '').trim(),
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[Google Auth] Erro ao carregar custom config do localStorage:', e);
+  }
+
+  // 2. Check import.meta.env
+  const env = (import.meta as any).env || {};
+  if (env.VITE_FIREBASE_API_KEY && env.VITE_FIREBASE_PROJECT_ID) {
+    return {
+      apiKey: String(env.VITE_FIREBASE_API_KEY).trim(),
+      authDomain: String(env.VITE_FIREBASE_AUTH_DOMAIN || `${env.VITE_FIREBASE_PROJECT_ID}.firebaseapp.com`).trim(),
+      projectId: String(env.VITE_FIREBASE_PROJECT_ID).trim(),
+      storageBucket: String(env.VITE_FIREBASE_STORAGE_BUCKET || `${env.VITE_FIREBASE_PROJECT_ID}.appspot.com`).trim(),
+      messagingSenderId: String(env.VITE_FIREBASE_MESSAGING_SENDER_ID || '').trim(),
+      appId: String(env.VITE_FIREBASE_APP_ID || '').trim(),
+      oAuthClientId: String(env.VITE_FIREBASE_OAUTH_CLIENT_ID || '').trim(),
+    };
+  }
+
+  // 3. Fallback to bundled firebase-applet-config.json
+  return firebaseConfig as CustomFirebaseConfig;
+};
+
+export const isUsingCustomFirebase = (): boolean => {
+  try {
+    return !!localStorage.getItem(STORAGE_KEY_CUSTOM_CONFIG);
+  } catch {
+    return false;
+  }
+};
+
+export const isUsingEnvFirebase = (): boolean => {
+  const env = (import.meta as any).env || {};
+  return !!(env.VITE_FIREBASE_API_KEY && env.VITE_FIREBASE_PROJECT_ID);
+};
+
+export const saveCustomFirebaseConfig = (cfg: CustomFirebaseConfig): void => {
+  localStorage.setItem(STORAGE_KEY_CUSTOM_CONFIG, JSON.stringify(cfg));
+  // Clear any existing cached token from previous project
+  localStorage.removeItem(STORAGE_KEY_TOKEN);
+  localStorage.removeItem(STORAGE_KEY_TIME);
+  localStorage.removeItem(STORAGE_KEY_USER);
+};
+
+export const resetCustomFirebaseConfig = (): void => {
+  localStorage.removeItem(STORAGE_KEY_CUSTOM_CONFIG);
+  localStorage.removeItem(STORAGE_KEY_TOKEN);
+  localStorage.removeItem(STORAGE_KEY_TIME);
+  localStorage.removeItem(STORAGE_KEY_USER);
+};
+
+// Initialize Firebase App
+const effectiveConfig = getEffectiveFirebaseConfig();
+const app = getApps().length > 0 ? getApp() : initializeApp(effectiveConfig);
 export const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
@@ -21,10 +119,6 @@ provider.setCustomParameters({
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
-
-const STORAGE_KEY_TOKEN = 'multilagos_google_workspace_token';
-const STORAGE_KEY_TIME = 'multilagos_google_token_time';
-const STORAGE_KEY_USER = 'multilagos_google_user';
 
 export interface SavedGoogleUser {
   uid: string;
@@ -43,6 +137,80 @@ export const getSavedGoogleUser = (): SavedGoogleUser | null => {
   } catch {
     return null;
   }
+};
+
+/**
+ * Formats Firebase Auth errors into clear, actionable diagnosis in Portuguese
+ */
+export const formatFirebaseError = (error: any): FirebaseErrorInfo => {
+  const code = String(error?.code || error?.name || '');
+  const rawMsg = String(error?.message || '');
+  const currentHostname = typeof window !== 'undefined' ? window.location.hostname : 'seu-servidor';
+  const currentProtocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+
+  if (code.includes('unauthorized-domain') || rawMsg.includes('unauthorized-domain')) {
+    return {
+      title: 'Domínio Não Autorizado no Firebase',
+      code: 'auth/unauthorized-domain',
+      isConfigIssue: true,
+      message: `O endereço "${currentHostname}" não está autorizado no Firebase Console. Para liberar o acesso: vá em console.firebase.google.com -> Seu Projeto -> Authentication -> Configurações -> Domínios Autorizados e adicione "${currentHostname}".`,
+    };
+  }
+
+  if (
+    code.includes('operation-not-supported-in-this-environment') ||
+    (currentProtocol === 'http:' && currentHostname !== 'localhost' && currentHostname !== '127.0.0.1')
+  ) {
+    return {
+      title: 'Conexão Segura (HTTPS) Obrigatória',
+      code: 'auth/operation-not-supported-in-this-environment',
+      isConfigIssue: true,
+      message: `O Google OAuth proíbe login em conexões HTTP inseguras (você está em "${currentProtocol}//${currentHostname}"). No Easypanel, ative o certificado SSL / HTTPS nas configurações de domínio do seu aplicativo.`,
+    };
+  }
+
+  if (code.includes('popup-blocked') || rawMsg.includes('popup')) {
+    return {
+      title: 'Janela Pop-up Bloqueada pelo Navegador',
+      code: 'auth/popup-blocked',
+      isConfigIssue: false,
+      message: 'O navegador impediu a abertura do popup de login do Google. Clique no ícone de pop-up bloqueado na barra de endereços e permita pop-ups para este site.',
+    };
+  }
+
+  if (code.includes('popup-closed-by-user')) {
+    return {
+      title: 'Login Cancelado',
+      code: 'auth/popup-closed-by-user',
+      isConfigIssue: false,
+      message: 'A janela de autenticação foi fechada antes de selecionar a conta Google.',
+    };
+  }
+
+  if (code.includes('invalid-api-key') || rawMsg.includes('API key')) {
+    return {
+      title: 'Chave de API do Firebase Inválida',
+      code: 'auth/invalid-api-key',
+      isConfigIssue: true,
+      message: 'A apiKey configurada no Firebase é inválida. Verifique os dados em "Configurar Firebase Próprio" no painel.',
+    };
+  }
+
+  if (code.includes('configuration-not-found')) {
+    return {
+      title: 'Provedor Google Não Habilitado',
+      code: 'auth/configuration-not-found',
+      isConfigIssue: true,
+      message: 'O login com Google não foi ativado no Firebase Console. Vá em Authentication -> Sign-in method -> Adicionar novo provedor -> Google e ative-o.',
+    };
+  }
+
+  return {
+    title: 'Erro de Autenticação Google',
+    code: code || 'auth/unknown',
+    isConfigIssue: true,
+    message: rawMsg || 'Falha na autenticação com o Google Workspace.',
+  };
 };
 
 /**

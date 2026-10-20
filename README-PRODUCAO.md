@@ -118,3 +118,34 @@ Se você quiser testar no seu computador:
 - ✅ **Download de PDFs 100% Ajustado**: Ao confirmar a assinatura digital, o sistema agora faz exatamente **1 download da Proposta Comercial + 1 download do Contrato Mestre (total 2 arquivos)**, com travas anti-clique duplo e proteção de concorrência.
 - ✅ **Grade de Planos Completa**: Restaurada com a visualização de todos os itens de escopo, badges, investimento e personalização dinâmica de adicionais.
 - ✅ **Arquivos de Produção Prontos**: `Dockerfile`, `nginx.conf` e `.github/workflows/deploy.yml` incluídos.
+
+---
+
+### 6. Como Conectar o Google Workspace (Drive & Planilhas) no seu Domínio Próprio / Easypanel
+
+#### Por que dá "Erro de Autenticação" ao conectar no Easypanel?
+**NÃO é defeito no código!** O Google e o Firebase utilizam um protocolo rígido de segurança (OAuth 2.0). 
+Todo domínio onde o sistema é executado (ex: `simulador.multilagos.com.br`) precisa estar **expressamente cadastrado na lista de Domínios Autorizados** do Firebase Console.
+Como o projeto padrão gerado no ambiente de desenvolvimento (`gen-lang-client-...`) é fechado, você precisa criar o seu próprio projeto gratuito no Firebase:
+
+#### Passo a Passo (Leva menos de 3 minutos):
+1. **Criar Projeto no Firebase**:
+   - Acesse [console.firebase.google.com](https://console.firebase.google.com/) com a sua conta Google.
+   - Clique em **Adicionar projeto** e dê um nome (ex: `multilagos-simulador`).
+2. **Ativar o Login com Google**:
+   - No menu lateral, vá em **Build** -> **Authentication**.
+   - Clique em **Começar** (Get Started) e na aba **Sign-in method**, ative o provedor **Google**.
+3. **Adicionar o Domínio do seu Easypanel**:
+   - Ainda em **Authentication**, clique na aba **Settings** (Configurações) -> **Authorized domains** (Domínios autorizados).
+   - Clique em **Adicionar domínio** e insira o seu domínio ou subdomínio (ex: `simulador.multilagos.com.br` ou o domínio temporário do Easypanel).
+4. **Ativar as APIs do Drive e Sheets**:
+   - Acesse o [Google Cloud Console](https://console.cloud.google.com/apis/library).
+   - Selecione o projeto criado e ative:
+     - **Google Drive API**
+     - **Google Sheets API**
+5. **Configurar as Credenciais no Sistema**:
+   - No Firebase Console, clique na engrenagem ⚙️ (**Configurações do Projeto**) -> **Geral**.
+   - Role até **Seus aplicativos**, clique no ícone Web `</>`, dê um apelido e copie o objeto `firebaseConfig`.
+   - **Opção 1 (Mais fácil - direto pelo navegador)**: Abra o seu simulador publicado, vá na aba **Painel do Consultor** -> **Google Workspace** -> **Configurar Firebase Próprio**, cole o bloco e clique em **Salvar**. Ele salva na hora e conecta sem precisar recompilar!
+   - **Opção 2 (Via Easypanel)**: No menu da aplicação no Easypanel, vá na aba **Environment** e preencha as variáveis `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_AUTH_DOMAIN` e `VITE_FIREBASE_APP_ID`.
+

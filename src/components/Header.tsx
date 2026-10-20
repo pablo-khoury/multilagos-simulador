@@ -46,6 +46,7 @@ export const Header: React.FC<HeaderProps> = ({
       }
     } catch (e) {
       console.error('Falha ao conectar Google:', e);
+      onSelectTab('admin');
     } finally {
       setIsConnectingGoogle(false);
     }

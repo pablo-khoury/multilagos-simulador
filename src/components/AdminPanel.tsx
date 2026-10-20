@@ -30,11 +30,47 @@ import {
   Printer,
   Eye,
   FileCheck2,
-  FileDown
+  FileDown,
+  Lock,
+  ShieldCheck,
+  AlertTriangle,
+  X,
+  Info,
+  Search,
+  Archive,
+  FileSpreadsheet,
+  UserCheck,
+  Clock
 } from 'lucide-react';
 import { MultilagosLogo } from './MultilagosLogo';
 import { formatBRL } from '../utils/calculator';
-import { initAuth, googleSignIn, logoutGoogle, getAccessToken, getSavedGoogleUser, SavedGoogleUser } from '../services/googleAuth';
+import {
+  SavedContractRecord,
+  getContractHistory,
+  downloadStoredContractPdf,
+  downloadContractPackageZip,
+  downloadAllContractsMasterZip,
+  downloadHistoryCsv,
+  downloadHistoryJson,
+  deleteContractRecord,
+  saveContractToHistory,
+} from '../services/contractHistoryService';
+import {
+  initAuth,
+  googleSignIn,
+  logoutGoogle,
+  getAccessToken,
+  getSavedGoogleUser,
+  SavedGoogleUser,
+  getEffectiveFirebaseConfig,
+  isUsingCustomFirebase,
+  isUsingEnvFirebase,
+  saveCustomFirebaseConfig,
+  resetCustomFirebaseConfig,
+  formatFirebaseError,
+  CustomFirebaseConfig,
+  FirebaseErrorInfo
+} from '../services/googleAuth';
 import { getOrCreateDriveFolder, getOrCreateSpreadsheet } from '../services/googleWorkspace';
 import { User } from 'firebase/auth';
 import { MasterContractDoc } from './documents/MasterContractDoc';
@@ -75,7 +111,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onResetDefaults,
   onCloseAdmin,
 }) => {
-  const [activeTab, setActiveTab] = useState<'planos' | 'faixas' | 'documentos' | 'asaas' | 'diagnostico' | 'producao' | 'google'>('planos');
+  const [activeTab, setActiveTab] = useState<'planos' | 'faixas' | 'documentos' | 'asaas' | 'diagnostico' | 'producao' | 'google' | 'aceites'>('planos');
   const [activeDocSubTab, setActiveDocSubTab] = useState<'contrato' | 'proposta-asaas' | 'proposta-regua' | 'proposta-integrada'>('contrato');
   const [docCopiedToast, setDocCopiedToast] = useState(false);
   const [isZippingDocs, setIsZippingDocs] = useState(false);
@@ -94,12 +130,154 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
 
+  // Contract & PDF History Archive State
+  const [contractRecords, setContractRecords] = useState<SavedContractRecord[]>(() => getContractHistory());
+  const [searchRecordTerm, setSearchRecordTerm] = useState<string>('');
+  const [selectedRecordForModal, setSelectedRecordForModal] = useState<SavedContractRecord | null>(null);
+  const [downloadingRecordId, setDownloadingRecordId] = useState<string | null>(null);
+  const [historyNotice, setHistoryNotice] = useState<string | null>(null);
+  const [copiedRecordInfoId, setCopiedRecordInfoId] = useState<string | null>(null);
+
   // Google Workspace Integration State
   const [googleUser, setGoogleUser] = useState<User | SavedGoogleUser | null>(() => getSavedGoogleUser());
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [googleFolderUrl, setGoogleFolderUrl] = useState<string | null>(null);
   const [googleSheetUrl, setGoogleSheetUrl] = useState<string | null>(null);
   const [googleStatusMsg, setGoogleStatusMsg] = useState<string | null>(null);
+  const [googleErrorInfo, setGoogleErrorInfo] = useState<FirebaseErrorInfo | null>(null);
+  const [showFirebaseModal, setShowFirebaseModal] = useState<boolean>(false);
+  const [firebasePastedInput, setFirebasePastedInput] = useState<string>('');
+  const [firebaseFormFields, setFirebaseFormFields] = useState<CustomFirebaseConfig>(() => getEffectiveFirebaseConfig());
+  const [configModalTab, setConfigModalTab] = useState<'paste' | 'fields'>('paste');
+  const [modalFeedback, setModalFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const [copiedDomain, setCopiedDomain] = useState<boolean>(false);
+  const [copiedOrigin, setCopiedOrigin] = useState<boolean>(false);
+  const [confirmReset, setConfirmReset] = useState<boolean>(false);
+
+  const refreshRecords = () => {
+    setContractRecords(getContractHistory());
+  };
+
+  const handleDownloadPdf = async (record: SavedContractRecord, type: 'proposal' | 'contract') => {
+    setDownloadingRecordId(`${record.id}_${type}`);
+    setHistoryNotice(`Baixando ${type === 'proposal' ? 'Proposta Comercial' : 'Contrato Mestre'}...`);
+    try {
+      const ok = await downloadStoredContractPdf(record, type);
+      if (ok) {
+        setHistoryNotice(`✓ PDF baixado com sucesso!`);
+      } else {
+        setHistoryNotice(`Arquivo PDF não encontrado em cache. Verifique o registro.`);
+      }
+    } catch {
+      setHistoryNotice(`Erro ao processar download do PDF.`);
+    } finally {
+      setDownloadingRecordId(null);
+      setTimeout(() => setHistoryNotice(null), 4000);
+    }
+  };
+
+  const handleDownloadRecordZip = async (record: SavedContractRecord) => {
+    setDownloadingRecordId(`${record.id}_zip`);
+    setHistoryNotice(`Gerando pacote ZIP para ${record.companyName}...`);
+    try {
+      await downloadContractPackageZip(record);
+      setHistoryNotice(`✓ Pacote ZIP baixado com sucesso!`);
+    } catch {
+      setHistoryNotice(`Erro ao gerar ZIP.`);
+    } finally {
+      setDownloadingRecordId(null);
+      setTimeout(() => setHistoryNotice(null), 4000);
+    }
+  };
+
+  const handleDownloadAllMasterZip = async () => {
+    setDownloadingRecordId('all_zip');
+    setHistoryNotice(`Gerando arquivo mestre com todos os contratos assinados...`);
+    try {
+      const ok = await downloadAllContractsMasterZip();
+      if (ok) {
+        setHistoryNotice(`✓ Todos os contratos foram exportados com sucesso em ZIP!`);
+      } else {
+        setHistoryNotice(`Nenhum contrato assinado encontrado para exportação.`);
+      }
+    } catch {
+      setHistoryNotice(`Erro ao gerar arquivo mestre.`);
+    } finally {
+      setDownloadingRecordId(null);
+      setTimeout(() => setHistoryNotice(null), 4000);
+    }
+  };
+
+  const handleDeleteRecord = async (id: string) => {
+    await deleteContractRecord(id);
+    refreshRecords();
+    if (selectedRecordForModal?.id === id) {
+      setSelectedRecordForModal(null);
+    }
+    setHistoryNotice('Registro removido do histórico.');
+    setTimeout(() => setHistoryNotice(null), 3000);
+  };
+
+  const handleCopyRecordSummary = (record: SavedContractRecord) => {
+    const summary = `*CONTRATO ACEITO - MULTILAGOS*\n` +
+      `Empresa: ${record.companyName}\n` +
+      `CNPJ: ${record.cnpj}\n` +
+      `Representante: ${record.contactName} (${record.cpf})\n` +
+      `Email: ${record.email} | WhatsApp: ${record.phone}\n` +
+      `Plano: ${record.planId} (${record.serviceTrack})\n` +
+      `Setup: R$ ${record.setupTotal.toFixed(2)} | Mensalidade: R$ ${record.monthlyTotal.toFixed(2)}\n` +
+      `Hash Assinatura: ${record.verificationHash}\n` +
+      `Data/Hora: ${record.signedAt}\n` +
+      `ID Proposta: ${record.id} | Contrato Mestre: ${record.contractMasterId}`;
+
+    try {
+      navigator.clipboard.writeText(summary);
+      setCopiedRecordInfoId(record.id);
+      setTimeout(() => setCopiedRecordInfoId(null), 2500);
+    } catch {}
+  };
+
+  const handleCreateTestRecord = async () => {
+    const randomSuffix = Math.floor(100 + Math.random() * 900);
+    const testProposal: CommercialProposal = {
+      ...sampleProposal,
+      id: `PROP-2026-${randomSuffix}`,
+      contractMasterId: `MSA-2026-${randomSuffix}`,
+      createdAt: new Date().toLocaleDateString('pt-BR'),
+      validUntil: new Date(Date.now() + 15 * 86400000).toLocaleDateString('pt-BR'),
+      status: 'client_accepted',
+      contractDurationText: 'Tempo Indeterminado (sem vencimento preestabelecido)',
+      clientInfo: {
+        companyName: 'Auto Posto Bandeirantes & Conveniência Ltda',
+        tradeName: 'Posto Bandeirantes Shell',
+        cnpj: '28.941.302/0001-45',
+        stateRegistration: '062.884.190.0019',
+        address: 'Av. Cristiano Machado, 4200, União - Belo Horizonte/MG',
+        contactName: 'Carlos Alberto Ferreira',
+        contactRole: 'Sócio-Administrador',
+        cpf: '094.721.836-12',
+        email: 'carlos.ferreira@postobandeirantes.com.br',
+        phone: '(31) 98765-4321',
+        cityState: 'Belo Horizonte/MG',
+        currentSystemName: 'Linx Postos / Softpharma',
+        connectedWhatsApp: '(31) 98765-4321',
+      },
+      signature: {
+        signed: true,
+        signatureType: 'type',
+        signerName: 'Carlos Alberto Ferreira',
+        signerCpf: '094.721.836-12',
+        signerIp: '187.122.45.109 (Verificado por Certificado Eletrônico)',
+        signedAt: new Date().toLocaleString('pt-BR'),
+        verificationHash: `ML-AUTH-${Math.random().toString(36).substring(2, 9).toUpperCase()}-2026`,
+      },
+    };
+
+    await saveContractToHistory(testProposal);
+    refreshRecords();
+    setHistoryNotice('✓ Aceite de teste gerado com sucesso no histórico!');
+    setTimeout(() => setHistoryNotice(null), 4000);
+  };
 
   useEffect(() => {
     const unsub = initAuth(
@@ -124,6 +302,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleConnectGoogle = async () => {
     setIsGoogleLoading(true);
     setGoogleStatusMsg(null);
+    setGoogleErrorInfo(null);
     try {
       const res = await googleSignIn();
       if (res?.user) {
@@ -131,7 +310,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         setGoogleStatusMsg('Conta conectada com sucesso ao Google Workspace!');
       }
     } catch (err: any) {
-      setGoogleStatusMsg('Erro ao conectar ao Google: ' + (err.message || 'Falha no login'));
+      const errInfo = formatFirebaseError(err);
+      setGoogleErrorInfo(errInfo);
+      setGoogleStatusMsg(errInfo.message);
     } finally {
       setIsGoogleLoading(false);
     }
@@ -143,6 +324,103 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setGoogleFolderUrl(null);
     setGoogleSheetUrl(null);
     setGoogleStatusMsg('Conta desconectada.');
+    setGoogleErrorInfo(null);
+  };
+
+  const handleSaveFirebaseConfig = (e: React.FormEvent) => {
+    e.preventDefault();
+    setModalFeedback(null);
+    try {
+      let cfgToSave: CustomFirebaseConfig = { ...firebaseFormFields };
+
+      if (configModalTab === 'paste') {
+        const text = firebasePastedInput.trim();
+        if (!text) {
+          setModalFeedback({ type: 'error', msg: 'Cole o JSON ou objeto de configuração do Firebase.' });
+          return;
+        }
+
+        let jsonParsed: any = null;
+        try {
+          const match = text.match(/\{[\s\S]*\}/);
+          if (match) {
+            jsonParsed = JSON.parse(match[0]);
+          }
+        } catch {
+          const apiKeyMatch = text.match(/apiKey:\s*['"]([^'"]+)['"]/);
+          const authDomainMatch = text.match(/authDomain:\s*['"]([^'"]+)['"]/);
+          const projectIdMatch = text.match(/projectId:\s*['"]([^'"]+)['"]/);
+          const appIdMatch = text.match(/appId:\s*['"]([^'"]+)['"]/);
+          const storageBucketMatch = text.match(/storageBucket:\s*['"]([^'"]+)['"]/);
+          const messagingSenderIdMatch = text.match(/messagingSenderId:\s*['"]([^'"]+)['"]/);
+          const clientIdMatch = text.match(/oAuthClientId:\s*['"]([^'"]+)['"]/);
+
+          if (apiKeyMatch && projectIdMatch) {
+            jsonParsed = {
+              apiKey: apiKeyMatch[1],
+              authDomain: authDomainMatch ? authDomainMatch[1] : `${projectIdMatch[1]}.firebaseapp.com`,
+              projectId: projectIdMatch[1],
+              storageBucket: storageBucketMatch ? storageBucketMatch[1] : '',
+              messagingSenderId: messagingSenderIdMatch ? messagingSenderIdMatch[1] : '',
+              appId: appIdMatch ? appIdMatch[1] : '',
+              oAuthClientId: clientIdMatch ? clientIdMatch[1] : '',
+            };
+          }
+        }
+
+        if (!jsonParsed || !jsonParsed.apiKey || !jsonParsed.projectId) {
+          setModalFeedback({
+            type: 'error',
+            msg: 'Não foi possível extrair apiKey e projectId do texto colado. Preencha os campos na aba manual ou copie o bloco completo.',
+          });
+          return;
+        }
+
+        cfgToSave = {
+          apiKey: String(jsonParsed.apiKey).trim(),
+          authDomain: String(jsonParsed.authDomain || `${jsonParsed.projectId}.firebaseapp.com`).trim(),
+          projectId: String(jsonParsed.projectId).trim(),
+          storageBucket: String(jsonParsed.storageBucket || `${jsonParsed.projectId}.appspot.com`).trim(),
+          messagingSenderId: String(jsonParsed.messagingSenderId || '').trim(),
+          appId: String(jsonParsed.appId || '').trim(),
+          oAuthClientId: String(jsonParsed.oAuthClientId || '').trim(),
+        };
+      } else {
+        if (!cfgToSave.apiKey || !cfgToSave.projectId) {
+          setModalFeedback({ type: 'error', msg: 'Preencha pelo menos a API Key e o Project ID.' });
+          return;
+        }
+      }
+
+      saveCustomFirebaseConfig(cfgToSave);
+      setModalFeedback({ type: 'success', msg: 'Configuração salva! Recarregando aplicação...' });
+      setTimeout(() => {
+        window.location.reload();
+      }, 700);
+    } catch (err: any) {
+      setModalFeedback({ type: 'error', msg: 'Erro ao salvar: ' + (err.message || 'Dados inválidos') });
+    }
+  };
+
+  const handleResetConfig = () => {
+    resetCustomFirebaseConfig();
+    setModalFeedback({ type: 'success', msg: 'Configurações restauradas para o padrão! Recarregando...' });
+    setTimeout(() => {
+      window.location.reload();
+    }, 700);
+  };
+
+  const handleCopyClipboard = (text: string, type: 'domain' | 'origin') => {
+    try {
+      navigator.clipboard.writeText(text);
+      if (type === 'domain') {
+        setCopiedDomain(true);
+        setTimeout(() => setCopiedDomain(false), 2500);
+      } else {
+        setCopiedOrigin(true);
+        setTimeout(() => setCopiedOrigin(false), 2500);
+      }
+    } catch {}
   };
 
   const handleTestWorkspace = async () => {
@@ -539,6 +817,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           >
             <FolderOpen className="w-4 h-4 text-blue-400" />
             <span>Google Drive & Planilhas</span>
+          </button>
+
+          <button
+            onClick={() => {
+              refreshRecords();
+              setActiveTab('aceites');
+            }}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+              activeTab === 'aceites' ? 'bg-[#D40B3A] text-white' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Clock className="w-4 h-4 text-emerald-400" />
+            <span>Histórico de Aceites & PDFs</span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+              {contractRecords.length}
+            </span>
           </button>
 
           <button
@@ -1678,7 +1972,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFirebaseFormFields(getEffectiveFirebaseConfig());
+                      setShowFirebaseModal(true);
+                      setModalFeedback(null);
+                    }}
+                    className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600/80 text-slate-200 text-xs font-semibold flex items-center gap-2 cursor-pointer transition-all shadow-sm"
+                  >
+                    <Sliders className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Configurar Firebase Próprio</span>
+                  </button>
+
                   {googleUser ? (
                     <div className="flex items-center gap-3">
                       <div className="text-right text-xs">
@@ -1688,7 +1995,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       <button
                         type="button"
                         onClick={handleDisconnectGoogle}
-                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                        className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer border border-slate-700"
                       >
                         Desconectar
                       </button>
@@ -1712,7 +2019,64 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
               </div>
 
-              {googleStatusMsg && (
+              {/* Error Diagnosis Banner */}
+              {googleErrorInfo && (
+                <div className="p-4 bg-rose-950/60 border border-rose-600/70 rounded-xl space-y-3 shadow-lg">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <strong className="text-sm font-bold text-rose-200">
+                          {googleErrorInfo.title}
+                        </strong>
+                        <span className="text-[10px] font-mono uppercase bg-rose-900/80 text-rose-300 px-2 py-0.5 rounded border border-rose-700">
+                          {googleErrorInfo.code}
+                        </span>
+                      </div>
+                      <p className="text-xs text-rose-200/90 leading-relaxed">
+                        {googleErrorInfo.message}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-rose-800/60 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyClipboard(typeof window !== 'undefined' ? window.location.hostname : '', 'domain')}
+                      className="px-3 py-1.5 rounded-lg bg-rose-900/80 hover:bg-rose-800 border border-rose-700 text-rose-200 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>{copiedDomain ? 'Copiado!' : `Copiar Domínio (${typeof window !== 'undefined' ? window.location.hostname : ''})`}</span>
+                    </button>
+
+                    <a
+                      href="https://console.firebase.google.com/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold flex items-center gap-1.5"
+                    >
+                      <span>Abrir Firebase Console</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFirebaseFormFields(getEffectiveFirebaseConfig());
+                        setShowFirebaseModal(true);
+                        setModalFeedback(null);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer ml-auto"
+                    >
+                      <Sliders className="w-3.5 h-3.5" />
+                      <span>Configurar Firebase do Seu Servidor</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Success Notification */}
+              {googleStatusMsg && !googleErrorInfo && (
                 <div className="p-3.5 bg-blue-950/60 border border-blue-700/60 rounded-xl text-xs text-blue-200 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                   <span>{googleStatusMsg}</span>
@@ -1819,6 +2183,798 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Diagnostic & Server Environment Card */}
+            <div className="bg-[#16242A] border border-slate-700/80 rounded-2xl p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-700 gap-3">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-white">
+                  <Server className="w-4 h-4 text-blue-400" />
+                  <span>Diagnóstico do Servidor & Ambiente Easypanel</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`px-2.5 py-0.5 rounded text-[11px] font-bold ${
+                    isUsingCustomFirebase() 
+                      ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-700'
+                      : isUsingEnvFirebase()
+                      ? 'bg-blue-950/80 text-blue-400 border border-blue-700'
+                      : 'bg-amber-950/80 text-amber-300 border border-amber-700'
+                  }`}>
+                    {isUsingCustomFirebase()
+                      ? 'Firebase Próprio Ativo'
+                      : isUsingEnvFirebase()
+                      ? 'Via Variáveis .env'
+                      : 'Firebase Padrão Sandbox'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                
+                {/* 1. Hostname */}
+                <div className="p-3.5 bg-[#111F24] border border-slate-800 rounded-xl space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                    Domínio Detectado
+                  </span>
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-xs font-mono font-bold text-white truncate" title={typeof window !== 'undefined' ? window.location.hostname : ''}>
+                      {typeof window !== 'undefined' ? window.location.hostname : 'localhost'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyClipboard(typeof window !== 'undefined' ? window.location.hostname : '', 'domain')}
+                      className="p-1 text-slate-400 hover:text-white cursor-pointer shrink-0"
+                      title="Copiar domínio"
+                    >
+                      {copiedDomain ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. Protocol */}
+                <div className="p-3.5 bg-[#111F24] border border-slate-800 rounded-xl space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                    Protocolo / SSL
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs font-bold ${
+                      (typeof window !== 'undefined' && (window.location.protocol === 'https:' || window.location.hostname === 'localhost'))
+                        ? 'text-emerald-400'
+                        : 'text-rose-400'
+                    }`}>
+                      {typeof window !== 'undefined' ? window.location.protocol.replace(':', '').toUpperCase() : 'HTTPS'}
+                    </span>
+                    {(typeof window !== 'undefined' && window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') ? (
+                      <span className="text-[10px] text-rose-400 font-semibold">(Requer HTTPS!)</span>
+                    ) : (
+                      <span className="text-[10px] text-emerald-400/80 font-medium">(Seguro)</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* 3. Firebase Project */}
+                <div className="p-3.5 bg-[#111F24] border border-slate-800 rounded-xl space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                    Projeto Firebase ID
+                  </span>
+                  <span className="text-xs font-mono text-slate-200 block truncate" title={getEffectiveFirebaseConfig().projectId}>
+                    {getEffectiveFirebaseConfig().projectId}
+                  </span>
+                </div>
+
+                {/* 4. Origem Completa */}
+                <div className="p-3.5 bg-[#111F24] border border-slate-800 rounded-xl space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                    Origem de Acesso
+                  </span>
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-xs font-mono text-slate-300 truncate" title={typeof window !== 'undefined' ? window.location.origin : ''}>
+                      {typeof window !== 'undefined' ? window.location.origin : ''}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyClipboard(typeof window !== 'undefined' ? window.location.origin : '', 'origin')}
+                      className="p-1 text-slate-400 hover:text-white cursor-pointer shrink-0"
+                      title="Copiar origem"
+                    >
+                      {copiedOrigin ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            {/* Step by Step Guide: Why does Auth error happen & How to solve */}
+            <div className="bg-[#16242A] border border-slate-700/80 rounded-2xl p-6 space-y-5">
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-200 border-b border-slate-700 pb-3">
+                <HelpCircle className="w-4 h-4 text-[#D40B3A]" />
+                <span>Por que dá Erro de Autenticação no Easypanel? (É problema no código ou configuração?)</span>
+              </div>
+
+              <div className="p-4 bg-blue-950/40 border border-blue-800/60 rounded-xl text-xs text-blue-200 space-y-2 leading-relaxed">
+                <div className="flex items-start gap-2">
+                  <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                  <p>
+                    <strong className="text-white">Resposta direta:</strong> <span className="text-emerald-300 font-bold">NÃO é erro no código!</span> Trata-se de uma regra de segurança obrigatória da Google e do Firebase chamada <strong className="text-white">"Domínios Autorizados" (OAuth Authorized Domains)</strong>.
+                  </p>
+                </div>
+                <p className="text-slate-300 pl-6 text-[11px]">
+                  O projeto padrão que vem nos arquivos baixados (<code className="text-blue-300">gen-lang-client-...</code>) pertence ao ambiente fechado de testes do Google AI Studio e só autoriza o domínio interno de preview. Quando você publica no seu servidor próprio (Easypanel, VPS ou domínio como <code className="text-white">{typeof window !== 'undefined' ? window.location.hostname : 'seu-dominio.com'}</code>), o Google bloqueia o login até que você aponte para o seu próprio projeto Firebase com o domínio cadastrado.
+                </p>
+              </div>
+
+              {/* 4 Steps */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                
+                <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-white">
+                    <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px]">1</span>
+                    <span>Criar Projeto Gratuito no Firebase</span>
+                  </div>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    Acesse <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline font-semibold">console.firebase.google.com</a> com sua conta Google e crie um projeto (ex: <code className="text-slate-200">multilagos-producao</code>). É 100% gratuito.
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-white">
+                    <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px]">2</span>
+                    <span>Ativar Login Google & Cadastrar seu Domínio</span>
+                  </div>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    Em <strong>Authentication &gt; Sign-in method</strong>, ative o provedor <strong>Google</strong>. Depois, na aba <strong>Configurações &gt; Domínios autorizados</strong>, adicione: <code className="text-emerald-400 bg-slate-900 px-1 py-0.5 rounded font-mono font-bold">{typeof window !== 'undefined' ? window.location.hostname : 'seu-dominio'}</code>.
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-white">
+                    <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px]">3</span>
+                    <span>Ativar APIs do Drive e Sheets</span>
+                  </div>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    No <a href="https://console.cloud.google.com/apis/library" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline font-semibold">Google Cloud Console</a>, selecione o mesmo projeto e ative a <strong>Google Drive API</strong> e a <strong>Google Sheets API</strong>.
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-white">
+                    <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px]">4</span>
+                    <span>Salvar Credenciais Aqui (Sem precisar de novo build!)</span>
+                  </div>
+                  <p className="text-slate-400 text-[11px] leading-relaxed">
+                    Copie o bloco de configuração do Firebase (em Configurações do Projeto &gt; Aplicativos da Web) e clique no botão <strong>"Configurar Firebase Próprio"</strong> abaixo. Ele salva no seu navegador e passa a conectar imediatamente!
+                  </p>
+                </div>
+
+              </div>
+
+              <div className="pt-2 flex flex-wrap items-center justify-between gap-3 border-t border-slate-700/80">
+                <span className="text-xs text-slate-400">
+                  Deseja configurar o Firebase do seu servidor agora mesmo?
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFirebaseFormFields(getEffectiveFirebaseConfig());
+                    setShowFirebaseModal(true);
+                    setModalFeedback(null);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-[#D40B3A] hover:bg-[#b00930] text-white text-xs font-bold flex items-center gap-2 cursor-pointer shadow-md transition-all"
+                >
+                  <Sliders className="w-4 h-4" />
+                  <span>Configurar Credenciais do Firebase</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal: Configurar Firebase Próprio */}
+            {showFirebaseModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+                <div className="bg-[#16242A] border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl p-6 sm:p-8 space-y-6">
+                  
+                  <div className="flex items-center justify-between pb-4 border-b border-slate-700">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                        <Sliders className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-white font-display">
+                          Configurar Firebase Próprio
+                        </h3>
+                        <p className="text-xs text-slate-400">
+                          Permite que o simulador conecte ao Google Workspace a partir do seu domínio no Easypanel.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowFirebaseModal(false)}
+                      className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {modalFeedback && (
+                    <div className={`p-3.5 rounded-xl text-xs flex items-center gap-2 border ${
+                      modalFeedback.type === 'success'
+                        ? 'bg-emerald-950/80 border-emerald-700 text-emerald-200'
+                        : 'bg-rose-950/80 border-rose-700 text-rose-200'
+                    }`}>
+                      {modalFeedback.type === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                      )}
+                      <span>{modalFeedback.msg}</span>
+                    </div>
+                  )}
+
+                  {/* Tabs within Modal */}
+                  <div className="flex border-b border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => setConfigModalTab('paste')}
+                      className={`pb-2.5 px-4 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                        configModalTab === 'paste'
+                          ? 'border-[#D40B3A] text-white'
+                          : 'border-transparent text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Colar JSON ou Código do Firebase
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfigModalTab('fields')}
+                      className={`pb-2.5 px-4 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+                        configModalTab === 'fields'
+                          ? 'border-[#D40B3A] text-white'
+                          : 'border-transparent text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Preenchimento Manual
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleSaveFirebaseConfig} className="space-y-4">
+                    {configModalTab === 'paste' ? (
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-300 block">
+                          Cole o bloco de configuração do Firebase Console:
+                        </label>
+                        <p className="text-[11px] text-slate-400">
+                          Você pode colar tanto o JSON puro quanto o trecho de código JavaScript gerado pelo Firebase (<code className="text-slate-300">const firebaseConfig = &#123; apiKey: "...", ... &#125;;</code>).
+                        </p>
+                        <textarea
+                          rows={8}
+                          value={firebasePastedInput}
+                          onChange={(e) => setFirebasePastedInput(e.target.value)}
+                          placeholder={`const firebaseConfig = {\n  apiKey: "AIzaSy...",\n  authDomain: "seu-projeto.firebaseapp.com",\n  projectId: "seu-projeto",\n  storageBucket: "seu-projeto.appspot.com",\n  messagingSenderId: "123456789",\n  appId: "1:123456789:web:..."\n};`}
+                          className="w-full bg-[#111F24] border border-slate-700 rounded-xl p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-slate-300">API Key *</label>
+                          <input
+                            type="text"
+                            value={firebaseFormFields.apiKey || ''}
+                            onChange={(e) => setFirebaseFormFields({ ...firebaseFormFields, apiKey: e.target.value })}
+                            placeholder="AIzaSy..."
+                            className="w-full bg-[#111F24] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-slate-300">Project ID *</label>
+                          <input
+                            type="text"
+                            value={firebaseFormFields.projectId || ''}
+                            onChange={(e) => setFirebaseFormFields({ ...firebaseFormFields, projectId: e.target.value })}
+                            placeholder="meu-projeto-123"
+                            className="w-full bg-[#111F24] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-slate-300">Auth Domain</label>
+                          <input
+                            type="text"
+                            value={firebaseFormFields.authDomain || ''}
+                            onChange={(e) => setFirebaseFormFields({ ...firebaseFormFields, authDomain: e.target.value })}
+                            placeholder="meu-projeto-123.firebaseapp.com"
+                            className="w-full bg-[#111F24] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-slate-300">App ID</label>
+                          <input
+                            type="text"
+                            value={firebaseFormFields.appId || ''}
+                            onChange={(e) => setFirebaseFormFields({ ...firebaseFormFields, appId: e.target.value })}
+                            placeholder="1:123456789:web:..."
+                            className="w-full bg-[#111F24] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-slate-300">Storage Bucket</label>
+                          <input
+                            type="text"
+                            value={firebaseFormFields.storageBucket || ''}
+                            onChange={(e) => setFirebaseFormFields({ ...firebaseFormFields, storageBucket: e.target.value })}
+                            placeholder="meu-projeto-123.appspot.com"
+                            className="w-full bg-[#111F24] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-slate-300">Messaging Sender ID</label>
+                          <input
+                            type="text"
+                            value={firebaseFormFields.messagingSenderId || ''}
+                            onChange={(e) => setFirebaseFormFields({ ...firebaseFormFields, messagingSenderId: e.target.value })}
+                            placeholder="123456789"
+                            className="w-full bg-[#111F24] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pt-4 border-t border-slate-700 flex flex-wrap items-center justify-between gap-3">
+                      {isUsingCustomFirebase() && (
+                        <div className="flex items-center gap-2">
+                          {!confirmReset ? (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmReset(true)}
+                              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-rose-300 text-xs font-semibold cursor-pointer"
+                            >
+                              Restaurar Padrão Sandbox
+                            </button>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] text-rose-300">Confirmar?</span>
+                              <button
+                                type="button"
+                                onClick={handleResetConfig}
+                                className="px-2.5 py-1 rounded bg-rose-600 text-white text-[11px] font-bold cursor-pointer"
+                              >
+                                Sim
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmReset(false)}
+                                className="px-2 py-1 rounded bg-slate-700 text-slate-300 text-[11px] cursor-pointer"
+                              >
+                                Não
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2 ml-auto">
+                        <button
+                          type="button"
+                          onClick={() => setShowFirebaseModal(false)}
+                          className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold cursor-pointer shadow-md"
+                        >
+                          Salvar e Aplicar
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+
+        {/* TAB 8: Histórico de Aceites & PDFs Salvos */}
+        {activeTab === 'aceites' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* Header Card with Stats and Global Export Buttons */}
+            <div className="bg-[#16242A] border border-slate-700/80 rounded-2xl p-6 sm:p-8 space-y-6 shadow-xl">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between pb-4 border-b border-slate-700 gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                    <Clock className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">
+                      Histórico Permanente de Aceites & PDFs
+                    </span>
+                    <h3 className="text-xl font-bold text-white font-display">
+                      Contratos Assinados & Dados dos Clientes
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Armazenamento local seguro e automático. Mesmo sem Google Drive configurado, todos os dados e PDFs ficam disponíveis para você baixar a qualquer momento.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={downloadHistoryCsv}
+                    disabled={contractRecords.length === 0}
+                    className="px-3.5 py-2.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-md transition-all"
+                    title="Exportar planilha completa (.csv) compatível com Excel e Google Sheets"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>Planilha Excel (CSV)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadAllMasterZip}
+                    disabled={contractRecords.length === 0 || downloadingRecordId === 'all_zip'}
+                    className="px-3.5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-md transition-all"
+                    title="Baixar todos os contratos e propostas em um único arquivo ZIP organizado por pastas"
+                  >
+                    {downloadingRecordId === 'all_zip' ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
+                    <span>Baixar Todos em ZIP</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={downloadHistoryJson}
+                    disabled={contractRecords.length === 0}
+                    className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer border border-slate-700"
+                    title="Exportar backup completo em formato JSON"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Backup JSON</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCreateTestRecord}
+                    className="px-3 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer border border-amber-500/40"
+                    title="Criar um aceite de demonstração para testar o histórico e o download de PDFs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Gerar Aceite de Teste</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Notice Banner */}
+              {historyNotice && (
+                <div className="p-3 bg-emerald-950/70 border border-emerald-600 rounded-xl text-xs text-emerald-200 flex items-center gap-2 animate-fade-in">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{historyNotice}</span>
+                </div>
+              )}
+
+              {/* Stats Bar */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="p-4 bg-[#111F24] border border-slate-800 rounded-xl space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Total de Aceites</span>
+                  <span className="text-xl font-bold text-white font-mono">{contractRecords.length}</span>
+                </div>
+                <div className="p-4 bg-[#111F24] border border-slate-800 rounded-xl space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Total em Setup</span>
+                  <span className="text-xl font-bold text-emerald-400 font-mono">
+                    {formatBRL(contractRecords.reduce((acc, r) => acc + (r.setupTotal || 0), 0))}
+                  </span>
+                </div>
+                <div className="p-4 bg-[#111F24] border border-slate-800 rounded-xl space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Recorrência Mensal</span>
+                  <span className="text-xl font-bold text-blue-400 font-mono">
+                    {formatBRL(contractRecords.reduce((acc, r) => acc + (r.monthlyTotal || 0), 0))}
+                  </span>
+                </div>
+                <div className="p-4 bg-[#111F24] border border-slate-800 rounded-xl space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Status de Salvamento</span>
+                  <span className="text-xs font-bold text-emerald-400 flex items-center gap-1 mt-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Armazenamento Ativo</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Search Bar */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchRecordTerm}
+                  onChange={(e) => setSearchRecordTerm(e.target.value)}
+                  placeholder="Pesquisar por Razão Social, CNPJ, Representante ou ID do Contrato..."
+                  className="w-full bg-[#111F24] border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              {/* Records List */}
+              {contractRecords.length === 0 ? (
+                <div className="p-8 text-center bg-[#111F24] border border-dashed border-slate-700 rounded-2xl space-y-3">
+                  <div className="w-12 h-12 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center mx-auto">
+                    <Clock className="w-6 h-6" />
+                  </div>
+                  <h4 className="text-sm font-bold text-white">Nenhum contrato assinado registrado ainda</h4>
+                  <p className="text-xs text-slate-400 max-w-md mx-auto">
+                    Assim que um cliente preencher o formulário na aba de aceite e confirmar a assinatura digital, o contrato e os PDFs serão salvos automaticamente aqui para você baixar.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleCreateTestRecord}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold inline-flex items-center gap-2 cursor-pointer shadow-md"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Criar Aceite de Teste para Demonstrar</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {contractRecords
+                    .filter((r) => {
+                      if (!searchRecordTerm.trim()) return true;
+                      const term = searchRecordTerm.toLowerCase();
+                      return (
+                        r.companyName.toLowerCase().includes(term) ||
+                        r.cnpj.includes(term) ||
+                        r.contactName.toLowerCase().includes(term) ||
+                        r.id.toLowerCase().includes(term) ||
+                        r.contractMasterId.toLowerCase().includes(term)
+                      );
+                    })
+                    .map((record) => (
+                      <div
+                        key={record.id}
+                        className="p-5 rounded-2xl bg-[#111F24] border border-slate-800 hover:border-slate-700 transition-all space-y-4"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-800 gap-3">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="text-base font-bold text-white font-display">
+                                {record.companyName}
+                              </h4>
+                              {record.tradeName && (
+                                <span className="text-xs text-slate-400 font-normal">
+                                  ({record.tradeName})
+                                </span>
+                              )}
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950/80 text-blue-300 border border-blue-800">
+                                {record.id}
+                              </span>
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800">
+                                {record.contractMasterId}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                              <span>CNPJ: <strong className="text-slate-200 font-mono">{record.cnpj}</strong></span>
+                              <span>•</span>
+                              <span>Representante: <strong className="text-slate-200">{record.contactName}</strong> ({record.cpf})</span>
+                              <span>•</span>
+                              <span>Assinado em: <strong className="text-slate-200">{record.signedAt}</strong></span>
+                            </div>
+                          </div>
+
+                          <div className="text-right sm:shrink-0">
+                            <div className="text-xs text-slate-400">Investimento Contratado</div>
+                            <div className="text-sm font-bold text-white font-mono">
+                              Setup: <span className="text-emerald-400">{formatBRL(record.setupTotal)}</span> · Mensal: <span className="text-blue-400">{formatBRL(record.monthlyTotal)}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Middle info grid */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-300">
+                          <div className="p-3 bg-[#16242A] rounded-xl border border-slate-800/80 space-y-1">
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Contato & Endereço</span>
+                            <div className="truncate font-semibold">{record.email}</div>
+                            <div className="text-slate-400 truncate">{record.phone}</div>
+                            <div className="text-[11px] text-slate-400 truncate" title={record.address}>{record.address || 'Endereço não informado'}</div>
+                          </div>
+
+                          <div className="p-3 bg-[#16242A] rounded-xl border border-slate-800/80 space-y-1">
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Plano & Serviços</span>
+                            <div className="font-semibold text-white uppercase">{record.planId} · {record.serviceTrack}</div>
+                            <div className="text-slate-400 text-[11px]">{record.contractDurationText}</div>
+                          </div>
+
+                          <div className="p-3 bg-[#16242A] rounded-xl border border-slate-800/80 space-y-1">
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Certificado Eletrônico</span>
+                            <div className="font-mono text-emerald-400 text-[11px] truncate" title={record.verificationHash}>
+                              {record.verificationHash}
+                            </div>
+                            <div className="text-slate-400 text-[10px] truncate">{record.signerIp}</div>
+                          </div>
+                        </div>
+
+                        {/* Action buttons bar */}
+                        <div className="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadPdf(record, 'proposal')}
+                              disabled={downloadingRecordId === `${record.id}_proposal`}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
+                            >
+                              {downloadingRecordId === `${record.id}_proposal` ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+                              <span>Baixar Proposta Comercial (PDF)</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadPdf(record, 'contract')}
+                              disabled={downloadingRecordId === `${record.id}_contract`}
+                              className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
+                            >
+                              {downloadingRecordId === `${record.id}_contract` ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FileCheck2 className="w-3.5 h-3.5" />}
+                              <span>Baixar Contrato Mestre MSA (PDF)</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadRecordZip(record)}
+                              disabled={downloadingRecordId === `${record.id}_zip`}
+                              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-amber-300 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer border border-amber-500/40 shadow-sm transition-all"
+                            >
+                              <Archive className="w-3.5 h-3.5" />
+                              <span>Pacote do Cliente (ZIP)</span>
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-2 ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => handleCopyRecordSummary(record)}
+                              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                              title="Copiar resumo para WhatsApp ou CRM"
+                            >
+                              {copiedRecordInfoId === record.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                              <span>{copiedRecordInfoId === record.id ? 'Copiado!' : 'Copiar'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setSelectedRecordForModal(record)}
+                              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Detalhes</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRecord(record.id)}
+                              className="p-1.5 text-slate-500 hover:text-rose-400 rounded-lg hover:bg-rose-950/40 cursor-pointer transition-colors"
+                              title="Remover do histórico"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+
+            {/* Modal: Visualizar Detalhes Completos do Cliente & Assinatura */}
+            {selectedRecordForModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+                <div className="bg-[#16242A] border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl p-6 sm:p-8 space-y-6">
+                  <div className="flex items-center justify-between pb-4 border-b border-slate-700">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                        <UserCheck className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-bold text-white font-display">
+                          {selectedRecordForModal.companyName}
+                        </h3>
+                        <p className="text-xs text-slate-400 font-mono">
+                          {selectedRecordForModal.id} · {selectedRecordForModal.contractMasterId}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRecordForModal(null)}
+                      className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Modal Body */}
+                  <div className="space-y-4 text-xs">
+                    <div className="grid grid-cols-2 gap-4 p-4 bg-[#111F24] rounded-xl border border-slate-800">
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold">Razão Social:</span>
+                        <span className="text-white font-semibold text-sm">{selectedRecordForModal.companyName}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold">CNPJ:</span>
+                        <span className="text-white font-mono font-semibold text-sm">{selectedRecordForModal.cnpj}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold">Representante Legal:</span>
+                        <span className="text-white font-medium">{selectedRecordForModal.contactName} ({selectedRecordForModal.cpf})</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold">Cargo:</span>
+                        <span className="text-white font-medium">{selectedRecordForModal.role || 'Não especificado'}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold">E-mail:</span>
+                        <span className="text-white font-medium">{selectedRecordForModal.email}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold">Telefone / WhatsApp:</span>
+                        <span className="text-white font-medium">{selectedRecordForModal.phone}</span>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold">Endereço Completo:</span>
+                        <span className="text-white font-medium">{selectedRecordForModal.address || 'Não especificado'}</span>
+                      </div>
+                    </div>
+
+                    {/* Signature details */}
+                    <div className="p-4 bg-[#111F24] rounded-xl border border-slate-800 space-y-2">
+                      <span className="text-[10px] uppercase font-bold text-emerald-400 block">Comprovante de Assinatura Digital</span>
+                      <div className="grid grid-cols-2 gap-2 text-slate-300">
+                        <div>Hash Digital: <strong className="text-white font-mono">{selectedRecordForModal.verificationHash}</strong></div>
+                        <div>Data/Hora: <strong className="text-white">{selectedRecordForModal.signedAt}</strong></div>
+                        <div>IP Signatário: <strong className="text-white">{selectedRecordForModal.signerIp}</strong></div>
+                        <div>Tipo Assinatura: <strong className="text-white">{selectedRecordForModal.signatureType === 'draw' ? 'Desenho na tela' : 'Digitada'}</strong></div>
+                      </div>
+                      {selectedRecordForModal.signatureDataString && (
+                        <div className="pt-2">
+                          <span className="text-[10px] text-slate-400 block mb-1">Imagem da Assinatura:</span>
+                          <div className="p-2 bg-white rounded-lg inline-block">
+                            <img src={selectedRecordForModal.signatureDataString} alt="Assinatura" className="h-12 max-w-[200px] object-contain" />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Downloads within Modal */}
+                    <div className="pt-4 border-t border-slate-700 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadPdf(selectedRecordForModal, 'proposal')}
+                          className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-md"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>Baixar Proposta (PDF)</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadPdf(selectedRecordForModal, 'contract')}
+                          className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-md"
+                        >
+                          <FileCheck2 className="w-3.5 h-3.5" />
+                          <span>Baixar Contrato (PDF)</span>
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRecordForModal(null)}
+                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+                      >
+                        Fechar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
           </div>
         )}

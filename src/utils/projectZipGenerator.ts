@@ -44,7 +44,7 @@ export async function generateFullProjectZipBlob(): Promise<Blob> {
   // 3. Add .env.example
   zip.file(
     '.env.example',
-    `# GEMINI_API_KEY: Required for Gemini AI API calls.\nGEMINI_API_KEY="MY_GEMINI_API_KEY"\nAPP_URL="http://localhost:3000"\n`
+    `# GEMINI_API_KEY: Required for Gemini AI API calls.\nGEMINI_API_KEY="MY_GEMINI_API_KEY"\nAPP_URL="http://localhost:3000"\n\n# FIREBASE / GOOGLE WORKSPACE OAUTH CONFIGURATION (Opcional - Easypanel/Servidor Próprio)\nVITE_FIREBASE_API_KEY=""\nVITE_FIREBASE_AUTH_DOMAIN=""\nVITE_FIREBASE_PROJECT_ID=""\nVITE_FIREBASE_STORAGE_BUCKET=""\nVITE_FIREBASE_MESSAGING_SENDER_ID=""\nVITE_FIREBASE_APP_ID=""\nVITE_FIREBASE_OAUTH_CLIENT_ID=""\n`
   );
 
   // 4. Add comprehensive README for Git and Deployment
