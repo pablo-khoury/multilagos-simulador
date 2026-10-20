@@ -11,7 +11,6 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
-
 # Copia código-fonte e compila
 COPY . .
 RUN npm run build
