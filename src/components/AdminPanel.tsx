@@ -54,6 +54,7 @@ import {
   downloadHistoryJson,
   deleteContractRecord,
   saveContractToHistory,
+  getPdfBlobFromDb,
 } from '../services/contractHistoryService';
 import {
   initAuth,
@@ -71,7 +72,18 @@ import {
   CustomFirebaseConfig,
   FirebaseErrorInfo
 } from '../services/googleAuth';
-import { getOrCreateDriveFolder, getOrCreateSpreadsheet } from '../services/googleWorkspace';
+import {
+  getOrCreateDriveFolder,
+  getOrCreateSpreadsheet,
+  uploadPdfToDrive,
+  appendProposalRowToSheet,
+  ProposalSheetRecord,
+  getGoogleWebhookUrl,
+  saveGoogleWebhookUrl,
+  testGoogleWebhook,
+  sendContractViaGoogleWebhook,
+  GOOGLE_APPS_SCRIPT_CODE,
+} from '../services/googleWorkspace';
 import { User } from 'firebase/auth';
 import { MasterContractDoc } from './documents/MasterContractDoc';
 import { AsaasProposalDoc } from './documents/AsaasProposalDoc';
@@ -153,6 +165,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [copiedDomain, setCopiedDomain] = useState<boolean>(false);
   const [copiedOrigin, setCopiedOrigin] = useState<boolean>(false);
   const [confirmReset, setConfirmReset] = useState<boolean>(false);
+  const [webhookUrlInput, setWebhookUrlInput] = useState<string>(() => getGoogleWebhookUrl());
+  const [isTestingWebhook, setIsTestingWebhook] = useState<boolean>(false);
+  const [copiedAppsScript, setCopiedAppsScript] = useState<boolean>(false);
+  const [syncingRecordId, setSyncingRecordId] = useState<string | null>(null);
 
   const refreshRecords = () => {
     setContractRecords(getContractHistory());
@@ -438,6 +454,161 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setGoogleStatusMsg('Erro ao testar: ' + (err.message || 'Falha'));
     } finally {
       setIsGoogleLoading(false);
+    }
+  };
+
+  const handleSaveWebhookUrl = () => {
+    const clean = webhookUrlInput.trim();
+    saveGoogleWebhookUrl(clean);
+    setGoogleErrorInfo(null);
+    if (clean) {
+      setGoogleStatusMsg('✓ URL da Automação 24h (Google Apps Script) salva com sucesso! Clique em "Testar & Criar Pasta/Planilha" para validar.');
+    } else {
+      setGoogleStatusMsg('Automação Webhook removida.');
+    }
+  };
+
+  const handleTestWebhook = async () => {
+    const clean = webhookUrlInput.trim();
+    if (!clean) {
+      setGoogleStatusMsg('Cole a URL do App da Web (terminada em /exec) antes de testar.');
+      return;
+    }
+    saveGoogleWebhookUrl(clean);
+    setIsTestingWebhook(true);
+    setGoogleErrorInfo(null);
+    setGoogleStatusMsg(null);
+    try {
+      const res = await testGoogleWebhook(clean);
+      if (res.driveFolderUrl) setGoogleFolderUrl(res.driveFolderUrl);
+      if (res.spreadsheetUrl) setGoogleSheetUrl(res.spreadsheetUrl);
+      setGoogleStatusMsg('✓ Automação 24h verificada! Pasta "Multilagos - Contratos Assinados" e Planilha conectadas com sucesso no seu Google Drive!');
+    } catch (err: any) {
+      setGoogleStatusMsg('Erro ao testar Webhook: ' + (err.message || 'Verifique se implantou como "Qualquer pessoa" e copiou a URL terminada em /exec.'));
+    } finally {
+      setIsTestingWebhook(false);
+    }
+  };
+
+  const handleCopyAppsScript = () => {
+    try {
+      navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE);
+      setCopiedAppsScript(true);
+      setTimeout(() => setCopiedAppsScript(false), 3000);
+    } catch {}
+  };
+
+  const handleSyncOfflineRecordToGoogle = async (record: SavedContractRecord) => {
+    setSyncingRecordId(record.id);
+    setHistoryNotice(`Sincronizando contrato de ${record.companyName} com Google Drive & Planilha...`);
+    try {
+      const propBlob = await getPdfBlobFromDb(`proposal_${record.id}`);
+      const contractBlob = await getPdfBlobFromDb(`contract_${record.id}`);
+
+      const servicesSummary = (record.proposal.selectedServices || [])
+        .map((s) => s.name)
+        .join(' + ') || (record.serviceTrack === 'esteira-asaas' ? 'Implantação Asaas' : 'Multicobrança WhatsApp');
+
+      const sheetRecord: ProposalSheetRecord = {
+        proposalId: record.id,
+        contractMasterId: record.contractMasterId,
+        signedAt: record.signedAt,
+        companyName: record.companyName,
+        tradeName: record.tradeName,
+        cnpj: record.cnpj,
+        contactName: record.contactName,
+        contactRole: record.role,
+        cpf: record.cpf,
+        email: record.email,
+        phone: record.phone,
+        cityState: record.proposal.clientInfo?.cityState || '',
+        servicesSummary,
+        setupTotal: record.setupTotal,
+        monthlyTotal: record.monthlyTotal,
+        asaasStatus: record.proposal.asaasBilling ? 'Ativado' : 'Registrado',
+        asaasPaymentId: record.proposal.asaasBilling?.paymentId,
+        verificationHash: record.verificationHash,
+        signerIp: record.signerIp,
+      };
+
+      const webhookUrl = getGoogleWebhookUrl();
+      if (webhookUrl) {
+        const whRes = await sendContractViaGoogleWebhook(
+          webhookUrl,
+          sheetRecord,
+          propBlob || undefined,
+          contractBlob || undefined,
+          `Proposta_Comercial_${record.id}.pdf`,
+          `Contrato_Mestre_Prestacao_Servicos_${record.contractMasterId}.pdf`
+        );
+        const updatedProposal: CommercialProposal = {
+          ...record.proposal,
+          googleDriveLinks: {
+            proposalPdfUrl: whRes.proposalPdfUrl || '',
+            contractPdfUrl: whRes.contractPdfUrl || '',
+            folderUrl: whRes.driveFolderUrl,
+            folderId: whRes.driveFolderId,
+            syncedAt: new Date().toLocaleString('pt-BR'),
+          },
+          googleSheetSync: {
+            spreadsheetId: whRes.spreadsheetId || '',
+            spreadsheetUrl: whRes.spreadsheetUrl || '',
+            syncedAt: new Date().toLocaleString('pt-BR'),
+          },
+        };
+        await saveContractToHistory(updatedProposal);
+        refreshRecords();
+        setHistoryNotice(`✓ Contrato de ${record.companyName} enviado com sucesso para o Google Drive e Planilha!`);
+        return;
+      }
+
+      const token = await getAccessToken();
+      if (!token) {
+        setHistoryNotice('Para enviar ao Google, configure o Webhook 24h ou clique em "Conectar com Google" na aba Google Drive & Planilhas.');
+        return;
+      }
+
+      const folder = await getOrCreateDriveFolder(token, 'Multilagos - Contratos Assinados');
+      let propLink = '';
+      let contractLink = '';
+      if (propBlob) {
+        const up1 = await uploadPdfToDrive(token, propBlob, `Proposta_Comercial_${record.id}.pdf`, folder.id);
+        propLink = up1.webViewLink;
+      }
+      if (contractBlob) {
+        const up2 = await uploadPdfToDrive(token, contractBlob, `Contrato_Mestre_Prestacao_Servicos_${record.contractMasterId}.pdf`, folder.id);
+        contractLink = up2.webViewLink;
+      }
+      const sheet = await getOrCreateSpreadsheet(token, 'Multilagos - Registro de Contratos e Aceites', folder.id);
+      await appendProposalRowToSheet(token, sheet.spreadsheetId, {
+        ...sheetRecord,
+        proposalDriveUrl: propLink,
+        contractDriveUrl: contractLink,
+      });
+
+      const updatedProposal: CommercialProposal = {
+        ...record.proposal,
+        googleDriveLinks: {
+          proposalPdfUrl: propLink,
+          contractPdfUrl: contractLink,
+          folderUrl: folder.webViewLink,
+          folderId: folder.id,
+          syncedAt: new Date().toLocaleString('pt-BR'),
+        },
+        googleSheetSync: {
+          spreadsheetId: sheet.spreadsheetId,
+          spreadsheetUrl: sheet.spreadsheetUrl,
+          syncedAt: new Date().toLocaleString('pt-BR'),
+        },
+      };
+      await saveContractToHistory(updatedProposal);
+      refreshRecords();
+      setHistoryNotice(`✓ Contrato de ${record.companyName} sincronizado com sucesso no Google Drive e Planilha!`);
+    } catch (err: any) {
+      setHistoryNotice(`Erro ao sincronizar com Google: ${err.message || 'Falha na conexão'}`);
+    } finally {
+      setSyncingRecordId(null);
+      setTimeout(() => setHistoryNotice(null), 6000);
     }
   };
 
@@ -2184,6 +2355,97 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               )}
             </div>
 
+            {/* OPÇÃO RECOMENDADA 24H: Google Apps Script Webhook (Sem expirar token em links remotos) */}
+            <div className="bg-[#16242A] border border-emerald-600/50 rounded-2xl p-6 sm:p-8 space-y-5 shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-700 gap-3">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-extrabold uppercase tracking-wider">
+                      Recomendado para Links Enviados a Clientes · 24h Automático
+                    </span>
+                    {getGoogleWebhookUrl() && (
+                      <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-700 text-[10px] font-bold">
+                        ✓ Webhook Ativo
+                      </span>
+                    )}
+                  </div>
+                  <h4 className="text-lg font-bold text-white font-display">
+                    Opção A: Automação 24h via Google Apps Script (Sem Firebase / Sem Expirar Login)
+                  </h4>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Quando você manda o link da proposta para o cliente assinar no celular dele horas ou dias depois, o login comum expira em 60 minutos. Com este script gratuito na sua própria conta Google, <strong>qualquer contrato assinado por qualquer cliente em qualquer horário cai direto no seu Google Drive e Planilha</strong>, sem precisar configurar Firebase ou Google Cloud!
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2.5">
+                  <div className="font-bold text-white flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px]">1</span>
+                    <span>Copiar o Código Pronto</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Copie nosso script oficial e abra o painel gratuito <a href="https://script.google.com/home/start" target="_blank" rel="noopener noreferrer" className="text-emerald-400 underline font-semibold">script.google.com</a> logado na sua conta Google, clicando em <strong>"Novo projeto"</strong>.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleCopyAppsScript}
+                    className="w-full py-2 px-3 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                  >
+                    {copiedAppsScript ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedAppsScript ? 'Código Copiado!' : 'Copiar Código Apps Script'}</span>
+                  </button>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2">
+                  <div className="font-bold text-white flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px]">2</span>
+                    <span>Publicar como App da Web</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Apague o que estiver no editor, cole o código, salve e clique em <strong>Implantar &gt; Nova implantação</strong>. Escolha o tipo <strong>App da Web</strong>, marque Executar como: <strong>"Eu"</strong> e Quem pode acessar: <strong>"Qualquer pessoa"</strong>. Autorize sua conta.
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2">
+                  <div className="font-bold text-white flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px]">3</span>
+                    <span>Colar a URL Gerada Abaixo</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Copie a URL do App da Web (terminada em <code className="text-emerald-300">/exec</code>) e salve abaixo (ou na variável <code className="text-slate-200">VITE_GOOGLE_WEBHOOK_URL</code> do Easypanel para valer em todos os navegadores).
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-1">
+                <input
+                  type="url"
+                  value={webhookUrlInput}
+                  onChange={(e) => setWebhookUrlInput(e.target.value)}
+                  placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+                  className="flex-1 bg-[#111F24] border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white font-mono placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveWebhookUrl}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Save className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Salvar URL</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleTestWebhook}
+                  disabled={isTestingWebhook}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                >
+                  {isTestingWebhook ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                  <span>{isTestingWebhook ? 'Testando no Google...' : 'Testar & Criar Pasta/Planilha'}</span>
+                </button>
+              </div>
+            </div>
+
             {/* Diagnostic & Server Environment Card */}
             <div className="bg-[#16242A] border border-slate-700/80 rounded-2xl p-6 space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-700 gap-3">
@@ -2284,65 +2546,72 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               </div>
             </div>
 
-            {/* Step by Step Guide: Why does Auth error happen & How to solve */}
+            {/* Step by Step Guide: Option B Firebase OAuth */}
             <div className="bg-[#16242A] border border-slate-700/80 rounded-2xl p-6 space-y-5">
               <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-200 border-b border-slate-700 pb-3">
                 <HelpCircle className="w-4 h-4 text-[#D40B3A]" />
-                <span>Por que dá Erro de Autenticação no Easypanel? (É problema no código ou configuração?)</span>
+                <span>Opção B: Configurar Botão "Conectar com Google" (Firebase + Google Cloud no Easypanel)</span>
               </div>
 
               <div className="p-4 bg-blue-950/40 border border-blue-800/60 rounded-xl text-xs text-blue-200 space-y-2 leading-relaxed">
                 <div className="flex items-start gap-2">
                   <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                   <p>
-                    <strong className="text-white">Resposta direta:</strong> <span className="text-emerald-300 font-bold">NÃO é erro no código!</span> Trata-se de uma regra de segurança obrigatória da Google e do Firebase chamada <strong className="text-white">"Domínios Autorizados" (OAuth Authorized Domains)</strong>.
+                    <strong className="text-white">Por que ocorria erro de autenticação?</strong> O arquivo padrão de testes bloqueia domínios externos. Para usar o botão de login Google direto no seu domínio (<code className="text-white">{typeof window !== 'undefined' ? window.location.hostname : 'seu-dominio.com'}</code>), siga os 5 passos rápidos abaixo:
                   </p>
                 </div>
-                <p className="text-slate-300 pl-6 text-[11px]">
-                  O projeto padrão que vem nos arquivos baixados (<code className="text-blue-300">gen-lang-client-...</code>) pertence ao ambiente fechado de testes do Google AI Studio e só autoriza o domínio interno de preview. Quando você publica no seu servidor próprio (Easypanel, VPS ou domínio como <code className="text-white">{typeof window !== 'undefined' ? window.location.hostname : 'seu-dominio.com'}</code>), o Google bloqueia o login até que você aponte para o seu próprio projeto Firebase com o domínio cadastrado.
-                </p>
               </div>
 
-              {/* 4 Steps */}
+              {/* 5 Steps */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                 
                 <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2">
                   <div className="flex items-center gap-2 font-bold text-white">
                     <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px]">1</span>
-                    <span>Criar Projeto Gratuito no Firebase</span>
+                    <span>Criar Projeto + App Web no Firebase</span>
                   </div>
                   <p className="text-slate-400 text-[11px] leading-relaxed">
-                    Acesse <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline font-semibold">console.firebase.google.com</a> com sua conta Google e crie um projeto (ex: <code className="text-slate-200">multilagos-producao</code>). É 100% gratuito.
+                    Acesse <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline font-semibold">console.firebase.google.com</a>, crie um projeto gratuito (ex: <code className="text-slate-200">multilagos-sistema</code>) e clique no ícone <code className="text-white">&lt;/&gt;</code> (Web) para registrar o app e copiar o <code className="text-blue-300">firebaseConfig</code>.
                   </p>
                 </div>
 
                 <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2">
                   <div className="flex items-center gap-2 font-bold text-white">
                     <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px]">2</span>
-                    <span>Ativar Login Google & Cadastrar seu Domínio</span>
+                    <span>Ativar Login Google & Autorizar Domínio</span>
                   </div>
                   <p className="text-slate-400 text-[11px] leading-relaxed">
-                    Em <strong>Authentication &gt; Sign-in method</strong>, ative o provedor <strong>Google</strong>. Depois, na aba <strong>Configurações &gt; Domínios autorizados</strong>, adicione: <code className="text-emerald-400 bg-slate-900 px-1 py-0.5 rounded font-mono font-bold">{typeof window !== 'undefined' ? window.location.hostname : 'seu-dominio'}</code>.
+                    No Firebase, vá em <strong>Authentication &gt; Sign-in method</strong> e ative o <strong>Google</strong>. Depois vá em <strong>Authentication &gt; Settings &gt; Domínios autorizados</strong> e adicione o domínio do seu Easypanel (ex: <code className="text-emerald-400 bg-slate-900 px-1 py-0.5 rounded font-mono font-bold">{typeof window !== 'undefined' ? window.location.hostname : 'seu-dominio'}</code>, sem https://).
                   </p>
                 </div>
 
                 <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2">
                   <div className="flex items-center gap-2 font-bold text-white">
                     <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px]">3</span>
-                    <span>Ativar APIs do Drive e Sheets</span>
+                    <span>Ativar APIs do Google Drive e Sheets</span>
                   </div>
                   <p className="text-slate-400 text-[11px] leading-relaxed">
-                    No <a href="https://console.cloud.google.com/apis/library" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline font-semibold">Google Cloud Console</a>, selecione o mesmo projeto e ative a <strong>Google Drive API</strong> e a <strong>Google Sheets API</strong>.
+                    Abra o <a href="https://console.cloud.google.com/apis/library" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline font-semibold">Google Cloud Console</a> (selecione o mesmo projeto criado no Firebase no topo) e clique em <strong>Ativar</strong> para <strong>Google Drive API</strong> e <strong>Google Sheets API</strong>.
                   </p>
                 </div>
 
-                <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2">
+                <div className="p-4 rounded-xl bg-[#111F24] border border-amber-500/40 space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-amber-300">
+                    <span className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center text-[10px]">4</span>
+                    <span>Liberar Seu E-mail na Tela OAuth (Evita Erro 403)</span>
+                  </div>
+                  <p className="text-slate-300 text-[11px] leading-relaxed">
+                    Ainda no Google Cloud, acesse <strong>APIs e Serviços &gt; Tela de permissão OAuth (Público-alvo)</strong>, role até <strong>"Usuários de teste"</strong> e adicione seu e-mail Google (<code className="text-amber-300">seu-email@gmail.com</code>). Isso libera acesso imediato ao Drive e Planilhas sem esperar auditoria do Google.
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2 md:col-span-2">
                   <div className="flex items-center gap-2 font-bold text-white">
-                    <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px]">4</span>
-                    <span>Salvar Credenciais Aqui (Sem precisar de novo build!)</span>
+                    <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px]">5</span>
+                    <span>Aplicar Credenciais (No Painel ou no Environment do Easypanel)</span>
                   </div>
                   <p className="text-slate-400 text-[11px] leading-relaxed">
-                    Copie o bloco de configuração do Firebase (em Configurações do Projeto &gt; Aplicativos da Web) e clique no botão <strong>"Configurar Firebase Próprio"</strong> abaixo. Ele salva no seu navegador e passa a conectar imediatamente!
+                    Clique em <strong>"Configurar Credenciais do Firebase"</strong> abaixo e cole o <code className="text-slate-200">firebaseConfig</code> para conectar imediatamente, ou preencha as variáveis <code className="text-slate-200">VITE_FIREBASE_*</code> na aba <strong>Environment</strong> do Easypanel e clique em <strong>Deploy</strong>.
                   </p>
                 </div>
 
@@ -2751,6 +3020,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800">
                                 {record.contractMasterId}
                               </span>
+                              {record.syncedToGoogle && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-950/90 text-blue-300 border border-blue-600/60 flex items-center gap-1">
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                  <span>Salvo no Google Drive</span>
+                                </span>
+                              )}
                             </div>
                             <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
                               <span>CNPJ: <strong className="text-slate-200 font-mono">{record.cnpj}</strong></span>
@@ -2824,6 +3099,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             >
                               <Archive className="w-3.5 h-3.5" />
                               <span>Pacote do Cliente (ZIP)</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleSyncOfflineRecordToGoogle(record)}
+                              disabled={syncingRecordId === record.id}
+                              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-blue-300 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer border border-blue-500/40 shadow-sm transition-all"
+                              title="Enviar PDFs e dados deste aceite para o Google Drive e Planilha Google Sheets"
+                            >
+                              {syncingRecordId === record.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FolderOpen className="w-3.5 h-3.5" />}
+                              <span>{record.syncedToGoogle ? 'Reenviar p/ Drive' : 'Enviar p/ Google Drive'}</span>
                             </button>
                           </div>
 

@@ -205,6 +205,15 @@ export const formatFirebaseError = (error: any): FirebaseErrorInfo => {
     };
   }
 
+  if (code.includes('access_denied') || rawMsg.includes('access_denied') || rawMsg.includes('403')) {
+    return {
+      title: 'Falta Cadastrar seu E-mail em "Usuários de Teste"',
+      code: 'oauth/access_denied (403)',
+      isConfigIssue: true,
+      message: 'No Google Cloud Console, acesse "APIs e Serviços > Tela de permissão OAuth (Público-alvo)" e adicione o seu e-mail Gmail na lista de "Usuários de teste" (ou clique em Publicar Aplicativo).',
+    };
+  }
+
   return {
     title: 'Erro de Autenticação Google',
     code: code || 'auth/unknown',

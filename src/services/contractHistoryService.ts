@@ -208,7 +208,7 @@ export const saveContractToHistory = async (
     hasProposalPdf: hasProp || (existingIdx >= 0 ? current[existingIdx].hasProposalPdf : false),
     hasContractPdf: hasMsa || (existingIdx >= 0 ? current[existingIdx].hasContractPdf : false),
 
-    syncedToGoogle: !!proposal.googleDriveLinks?.proposalPdfUrl,
+    syncedToGoogle: !!(proposal.googleDriveLinks?.proposalPdfUrl || proposal.googleSheetSync?.spreadsheetUrl),
     googleDriveLinks: proposal.googleDriveLinks,
     googleSheetSync: proposal.googleSheetSync,
   };

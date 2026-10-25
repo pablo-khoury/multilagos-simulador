@@ -354,9 +354,12 @@ export function getTieredPlanPrice(
 export function encodeProposalToUrlParam(proposal: CommercialProposal): string {
   try {
     let savedGoogleToken: string | undefined = undefined;
+    let savedWebhookUrl: string | undefined = undefined;
     try {
       const tok = localStorage.getItem('multilagos_google_workspace_token');
       if (tok) savedGoogleToken = tok;
+      const wh = localStorage.getItem('multilagos_google_webhook_url') || ((import.meta as any).env?.VITE_GOOGLE_WEBHOOK_URL || '');
+      if (wh && String(wh).trim()) savedWebhookUrl = String(wh).trim();
     } catch {}
 
     const compact: Record<string, any> = {
@@ -387,6 +390,10 @@ export function encodeProposalToUrlParam(proposal: CommercialProposal): string {
       vt: proposal.validUntil,
     };
 
+    if (savedWebhookUrl) {
+      compact.wh = savedWebhookUrl;
+    }
+
     if (savedGoogleToken) {
       compact.gt = savedGoogleToken;
     }
@@ -406,6 +413,13 @@ export function decodeProposalFromUrlParam(param: string): Partial<CommercialPro
   try {
     const json = atob(decodeURIComponent(param));
     const data = JSON.parse(json);
+
+    // If a 24h Google Apps Script Webhook URL was encoded by the consultant, save it so remote clients sync 24/7
+    if (data.wh) {
+      try {
+        localStorage.setItem('multilagos_google_webhook_url', String(data.wh).trim());
+      } catch {}
+    }
 
     // If a Google Workspace token was encoded by the consultant, save it so client auto-syncs seamlessly
     if (data.gt) {

@@ -23,7 +23,9 @@ import {
   uploadPdfToDrive, 
   getOrCreateSpreadsheet, 
   appendProposalRowToSheet, 
-  ProposalSheetRecord 
+  ProposalSheetRecord,
+  getGoogleWebhookUrl,
+  sendContractViaGoogleWebhook
 } from '../services/googleWorkspace';
 import {
   saveContractToHistory,
@@ -173,7 +175,7 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
     setHasDrawn(false);
   };
 
-  // Background Google Workspace Synchronization: runs automatically without user buttons or prompts!
+  // Background Google Workspace Synchronization: runs automatically via 24h Webhook OR OAuth Token!
   const sendDirectlyToGoogleWorkspace = async (
     propBlob: Blob,
     contractBlob: Blob,
@@ -181,59 +183,96 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
     sig: DigitalSignatureData,
     billing: AsaasBillingResult | null
   ) => {
+    const servicesSummary = (currentProposal.selectedServices || [])
+      .map((s) => s.name)
+      .join(' + ') || (currentProposal.serviceTrack === 'esteira-asaas' ? 'Implantação Asaas' : 'Multicobrança WhatsApp');
+
+    const baseRecord: ProposalSheetRecord = {
+      proposalId: currentProposal.id,
+      contractMasterId: currentProposal.contractMasterId,
+      signedAt: sig.signedAt || new Date().toLocaleString('pt-BR'),
+      companyName: clientInfo.companyName,
+      tradeName: clientInfo.tradeName,
+      cnpj: clientInfo.cnpj,
+      contactName: clientInfo.contactName,
+      contactRole: clientInfo.contactRole,
+      cpf: clientInfo.cpf,
+      email: clientInfo.email,
+      phone: clientInfo.phone,
+      cityState: clientInfo.cityState,
+      servicesSummary,
+      setupTotal: fin.setupTotal,
+      monthlyTotal: fin.monthlyTotal,
+      asaasStatus: billing ? 'Ativado' : 'Aguardando',
+      asaasPaymentId: billing?.paymentId,
+      verificationHash: sig.verificationHash,
+      signerIp: sig.signerIp,
+    };
+
+    // 1. Prefer 24/7 Google Apps Script Webhook if configured (works remotely without 60-min token expiry!)
+    const webhookUrl = getGoogleWebhookUrl();
+    if (webhookUrl) {
+      try {
+        console.log('[Google Workspace Webhook 24h] Enviando PDFs e dados do aceite para o Google Drive/Sheets...');
+        const whRes = await sendContractViaGoogleWebhook(
+          webhookUrl,
+          baseRecord,
+          propBlob,
+          contractBlob,
+          proposalFilename,
+          contractFilename
+        );
+
+        if (whRes.success) {
+          const syncedProposal: CommercialProposal = {
+            ...currentProposal,
+            googleDriveLinks: {
+              proposalPdfUrl: whRes.proposalPdfUrl || '',
+              contractPdfUrl: whRes.contractPdfUrl || '',
+              folderUrl: whRes.driveFolderUrl,
+              folderId: whRes.driveFolderId,
+              syncedAt: new Date().toLocaleString('pt-BR'),
+            },
+            googleSheetSync: {
+              spreadsheetId: whRes.spreadsheetId || '',
+              spreadsheetUrl: whRes.spreadsheetUrl || '',
+              syncedAt: new Date().toLocaleString('pt-BR'),
+            },
+          };
+
+          await saveContractToHistory(syncedProposal, propBlob, contractBlob);
+          onProposalSigned(syncedProposal);
+          console.log('[Google Workspace Webhook 24h] Sucesso total: PDFs salvos no Drive e linha gravada no Sheets!');
+          return;
+        }
+      } catch (whErr) {
+        console.warn('[Google Workspace Webhook 24h] Falha no envio via Webhook, tentando fallback OAuth:', whErr);
+      }
+    }
+
+    // 2. Direct OAuth Token Flow (Firebase Google Sign-In)
     try {
       const token = await getAccessToken();
       if (!token) {
-        console.log('[Google Workspace Auto-Sync] Token de acesso não disponível no momento. Para sincronizar automaticamente com o Drive e Sheets, conecte o Google no Painel do Consultor ou no Topo.');
+        console.log('[Google Workspace Auto-Sync] Token OAuth ou Webhook não configurado no momento. Dados e PDFs seguem salvos no Histórico do Sistema.');
         return;
       }
 
-      console.log('[Google Workspace Auto-Sync] Iniciando upload dos PDFs e registro na planilha...');
+      console.log('[Google Workspace Auto-Sync] Iniciando upload dos PDFs e registro na planilha via OAuth...');
 
-      // 1. Get or create Drive folder "Multilagos - Contratos Assinados"
       const folder = await getOrCreateDriveFolder(token, 'Multilagos - Contratos Assinados');
-
-      // 2. Upload Proposal PDF to Drive folder
       const propUpload = await uploadPdfToDrive(token, propBlob, proposalFilename, folder.id);
-
-      // 3. Upload Master Contract PDF to Drive folder
       const contractUpload = await uploadPdfToDrive(token, contractBlob, contractFilename, folder.id);
-
-      // 4. Get or create Google Sheets spreadsheet "Multilagos - Registro de Contratos e Aceites" inside folder
       const sheet = await getOrCreateSpreadsheet(token, 'Multilagos - Registro de Contratos e Aceites', folder.id);
 
-      // 5. Append proposal data row
-      const servicesSummary = (currentProposal.selectedServices || [])
-        .map((s) => s.name)
-        .join(' + ') || (currentProposal.serviceTrack === 'esteira-asaas' ? 'Implantação Asaas' : 'Multicobrança WhatsApp');
-
-      const record: ProposalSheetRecord = {
-        proposalId: currentProposal.id,
-        contractMasterId: currentProposal.contractMasterId,
-        signedAt: sig.signedAt || new Date().toLocaleString('pt-BR'),
-        companyName: clientInfo.companyName,
-        tradeName: clientInfo.tradeName,
-        cnpj: clientInfo.cnpj,
-        contactName: clientInfo.contactName,
-        contactRole: clientInfo.contactRole,
-        cpf: clientInfo.cpf,
-        email: clientInfo.email,
-        phone: clientInfo.phone,
-        cityState: clientInfo.cityState,
-        servicesSummary,
-        setupTotal: fin.setupTotal,
-        monthlyTotal: fin.monthlyTotal,
-        asaasStatus: billing ? 'Ativado' : 'Aguardando',
-        asaasPaymentId: billing?.paymentId,
-        verificationHash: sig.verificationHash,
-        signerIp: sig.signerIp,
+      const recordWithLinks: ProposalSheetRecord = {
+        ...baseRecord,
         proposalDriveUrl: propUpload.webViewLink,
         contractDriveUrl: contractUpload.webViewLink,
       };
 
-      await appendProposalRowToSheet(token, sheet.spreadsheetId, record);
+      await appendProposalRowToSheet(token, sheet.spreadsheetId, recordWithLinks);
 
-      // 6. Persist Google links into proposal
       const syncedProposal: CommercialProposal = {
         ...currentProposal,
         googleDriveLinks: {
@@ -250,6 +289,7 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
         },
       };
 
+      await saveContractToHistory(syncedProposal, propBlob, contractBlob);
       onProposalSigned(syncedProposal);
       console.log('[Google Workspace Auto-Sync] Sucesso total: Documentos salvos no Google Drive e linha adicionada à Planilha Sheets!');
     } catch (err) {

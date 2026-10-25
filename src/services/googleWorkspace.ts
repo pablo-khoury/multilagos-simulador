@@ -349,3 +349,240 @@ export async function appendProposalRowToSheet(
 
   return true;
 }
+
+// ============================================================================
+// INTEGRAÇÃO 24H VIA GOOGLE APPS SCRIPT / WEBHOOK (SEM EXPIRAÇÃO DE TOKEN)
+// ============================================================================
+
+const STORAGE_KEY_WEBHOOK = 'multilagos_google_webhook_url';
+
+export function getGoogleWebhookUrl(): string {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_WEBHOOK);
+    if (saved && saved.trim()) return saved.trim();
+  } catch {}
+  const env = (import.meta as any).env || {};
+  if (env.VITE_GOOGLE_WEBHOOK_URL && String(env.VITE_GOOGLE_WEBHOOK_URL).trim()) {
+    return String(env.VITE_GOOGLE_WEBHOOK_URL).trim();
+  }
+  return '';
+}
+
+export function saveGoogleWebhookUrl(url: string): void {
+  try {
+    const clean = url.trim();
+    if (clean) {
+      localStorage.setItem(STORAGE_KEY_WEBHOOK, clean);
+    } else {
+      localStorage.removeItem(STORAGE_KEY_WEBHOOK);
+    }
+  } catch {}
+}
+
+function blobToBase64Pure(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const res = String(reader.result || '');
+      const base64 = res.includes(',') ? res.split(',')[1] : res;
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+export async function testGoogleWebhook(webhookUrl: string): Promise<GoogleSyncResult> {
+  const res = await fetch(webhookUrl.trim(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({
+      action: 'ping',
+      folderName: DEFAULT_FOLDER_NAME,
+      sheetTitle: DEFAULT_SHEET_TITLE,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Resposta HTTP ${res.status} ao testar Webhook.`);
+  }
+
+  const json = await res.json();
+  if (!json.success) {
+    throw new Error(json.error || 'O script retornou falha.');
+  }
+
+  return {
+    success: true,
+    driveFolderId: json.folderId,
+    driveFolderUrl: json.folderUrl,
+    spreadsheetId: json.spreadsheetId,
+    spreadsheetUrl: json.spreadsheetUrl,
+  };
+}
+
+export async function sendContractViaGoogleWebhook(
+  webhookUrl: string,
+  record: ProposalSheetRecord,
+  proposalPdfBlob?: Blob,
+  contractPdfBlob?: Blob,
+  proposalFilename?: string,
+  contractFilename?: string
+): Promise<GoogleSyncResult> {
+  const propBase64 = proposalPdfBlob ? await blobToBase64Pure(proposalPdfBlob) : undefined;
+  const contractBase64 = contractPdfBlob ? await blobToBase64Pure(contractPdfBlob) : undefined;
+
+  const payload = {
+    action: 'save_contract',
+    folderName: DEFAULT_FOLDER_NAME,
+    sheetTitle: DEFAULT_SHEET_TITLE,
+    record,
+    proposalPdfBase64: propBase64,
+    proposalFilename: proposalFilename ? (proposalFilename.endsWith('.pdf') ? proposalFilename : `${proposalFilename}.pdf`) : `Proposta_${record.proposalId}.pdf`,
+    contractPdfBase64: contractBase64,
+    contractFilename: contractFilename ? (contractFilename.endsWith('.pdf') ? contractFilename : `${contractFilename}.pdf`) : `Contrato_${record.contractMasterId}.pdf`,
+  };
+
+  const res = await fetch(webhookUrl.trim(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Erro HTTP ${res.status} ao enviar para o Webhook Google.`);
+  }
+
+  const json = await res.json();
+  if (!json.success) {
+    throw new Error(json.error || 'Falha ao salvar via Google Apps Script.');
+  }
+
+  return {
+    success: true,
+    driveFolderId: json.folderId,
+    driveFolderUrl: json.folderUrl,
+    proposalPdfUrl: json.proposalPdfUrl,
+    contractPdfUrl: json.contractPdfUrl,
+    spreadsheetId: json.spreadsheetId,
+    spreadsheetUrl: json.spreadsheetUrl,
+  };
+}
+
+export const GOOGLE_APPS_SCRIPT_CODE = `// =========================================================================
+// MULTILAGOS - INTEGRAÇÃO AUTOMÁTICA 24H GOOGLE DRIVE & GOOGLE SHEETS
+// Cole este código em https://script.google.com -> Implantar -> App da Web
+// Executar como: "Eu" | Quem pode acessar: "Qualquer pessoa"
+// =========================================================================
+
+function getOrCreateFolder_(folderName) {
+  var folders = DriveApp.getFoldersByName(folderName);
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder(folderName);
+}
+
+function getOrCreateSheet_(sheetTitle, folder) {
+  var files = DriveApp.getFilesByName(sheetTitle);
+  while (files.hasNext()) {
+    var f = files.next();
+    if (!f.isTrashed() && f.getMimeType() === MimeType.GOOGLE_SHEETS) {
+      return SpreadsheetApp.openById(f.getId());
+    }
+  }
+  var ss = SpreadsheetApp.create(sheetTitle);
+  var sheet = ss.getActiveSheet();
+  sheet.setName('Aceites e Contratos');
+  var headers = [
+    'Data/Hora Assinatura', 'Nº Proposta', 'Nº Contrato Mestre', 'Razão Social',
+    'Nome Fantasia', 'CNPJ', 'Representante Legal', 'Cargo', 'CPF', 'E-mail',
+    'Telefone / WhatsApp', 'Cidade/UF', 'Serviços Contratados', 'Setup Total (R$)',
+    'Mensalidade Total (R$)', 'Status Asaas', 'ID Cobrança Asaas',
+    'Hash Assinatura Digital', 'IP Verificado', 'Link PDF Proposta (Drive)', 'Link PDF Contrato (Drive)'
+  ];
+  sheet.appendRow(headers);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#111F24').setFontColor('#FFFFFF');
+  try {
+    var ssFile = DriveApp.getFileById(ss.getId());
+    folder.addFile(ssFile);
+  } catch (err) {}
+  return ss;
+}
+
+function doPost(e) {
+  try {
+    var data = JSON.parse(e.postData.contents);
+    var folderName = data.folderName || 'Multilagos - Contratos Assinados';
+    var sheetTitle = data.sheetTitle || 'Multilagos - Registro de Contratos e Aceites';
+
+    var folder = getOrCreateFolder_(folderName);
+    var ss = getOrCreateSheet_(sheetTitle, folder);
+
+    if (data.action === 'ping') {
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        folderId: folder.getId(),
+        folderUrl: folder.getUrl(),
+        spreadsheetId: ss.getId(),
+        spreadsheetUrl: ss.getUrl()
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var proposalPdfUrl = '';
+    var contractPdfUrl = '';
+
+    if (data.proposalPdfBase64) {
+      var propBlob = Utilities.newBlob(Utilities.base64Decode(data.proposalPdfBase64), 'application/pdf', data.proposalFilename || 'Proposta.pdf');
+      var propFile = folder.createFile(propBlob);
+      proposalPdfUrl = propFile.getUrl();
+    }
+
+    if (data.contractPdfBase64) {
+      var contBlob = Utilities.newBlob(Utilities.base64Decode(data.contractPdfBase64), 'application/pdf', data.contractFilename || 'Contrato.pdf');
+      var contFile = folder.createFile(contBlob);
+      contractPdfUrl = contFile.getUrl();
+    }
+
+    var r = data.record || {};
+    var sheet = ss.getSheetByName('Aceites e Contratos') || ss.getSheets()[0];
+    sheet.appendRow([
+      r.signedAt || new Date().toLocaleString('pt-BR'),
+      r.proposalId || '',
+      r.contractMasterId || '',
+      r.companyName || '',
+      r.tradeName || '',
+      r.cnpj || '',
+      r.contactName || '',
+      r.contactRole || 'Representante Legal',
+      r.cpf || '',
+      r.email || '',
+      r.phone || '',
+      r.cityState || '',
+      r.servicesSummary || '',
+      r.setupTotal || 0,
+      r.monthlyTotal || 0,
+      r.asaasStatus || 'Ativado',
+      r.asaasPaymentId || '',
+      r.verificationHash || '',
+      r.signerIp || '',
+      proposalPdfUrl || r.proposalDriveUrl || '',
+      contractPdfUrl || r.contractDriveUrl || ''
+    ]);
+
+    return ContentService.createTextOutput(JSON.stringify({
+      success: true,
+      folderId: folder.getId(),
+      folderUrl: folder.getUrl(),
+      proposalPdfUrl: proposalPdfUrl,
+      contractPdfUrl: contractPdfUrl,
+      spreadsheetId: ss.getId(),
+      spreadsheetUrl: ss.getUrl()
+    })).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      success: false,
+      error: String(err)
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+`;
+
