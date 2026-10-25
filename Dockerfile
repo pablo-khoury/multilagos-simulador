@@ -1,5 +1,5 @@
 # -------------------------------------------------------------
-# Dockerfile Multi-stage para Produção no Easypanel / VPS Hostinger
+# Dockerfile Multi-stage para Produção no Easypanel / VPS
 # -------------------------------------------------------------
 
 # Estágio 1: Build da aplicação React + Vite
@@ -26,21 +26,25 @@ ENV VITE_FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID
 ENV VITE_FIREBASE_OAUTH_CLIENT_ID=$VITE_FIREBASE_OAUTH_CLIENT_ID
 ENV VITE_GOOGLE_WEBHOOK_URL=$VITE_GOOGLE_WEBHOOK_URL
 
-# Copia dependências e instala
-COPY package*.json ./
-RUN npm install
+# Copia apenas o package.json
+COPY package.json ./
 
-# Copia código-fonte e compila
+# Remove qualquer lockfile corrompido e faz a instalação limpa das dependências
+RUN rm -f package-lock.json && npm install --legacy-peer-deps
+
+# Copia o restante do código-fonte
 COPY . .
+
+# Compila o projeto gerando a pasta dist
 RUN npm run build
 
-# Estágio 2: Servidor Web Nginx ultra-leve
+# Estágio 2: Servidor Web Nginx ultra-leve para a SPA
 FROM nginx:alpine
 
-# Copia build estático
+# Copia os arquivos compilados do estágio anterior para o Nginx
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Copia configuração do Nginx com suporte a SPA
+# Copia a configuração do Nginx com suporte a rotas do React (SPA)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
