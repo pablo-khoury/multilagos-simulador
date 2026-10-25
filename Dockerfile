@@ -3,23 +3,23 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copia apenas os arquivos de dependência primeiro para aproveitar o cache
-COPY package.json ./
+# Copia os arquivos de dependência
+COPY package*.json ./
 
-# Removemos qualquer dependência de lockfile problemático e forçamos uma instalação limpa
+# Instalação limpa
 RUN npm install --legacy-peer-deps
 
 # Copia o restante do código-fonte
 COPY . .
 
-# Se o seu projeto for um app frontend (como Vite/React), descomente a linha abaixo para compilar:
-# RUN npm run build
+# Compila o projeto (gerando a pasta dist otimizada para produção)
+RUN npm run build
 
 # Estágio de Produção com Nginx
 FROM nginx:alpine
 
-# Copia os arquivos gerados (ajuste o caminho de build se necessário, ex: /app/dist para /usr/share/nginx/html)
-COPY --from=builder /app /usr/share/nginx/html
+# Copia apenas os arquivos compilados da pasta dist para o NGINX
+COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 80
 
