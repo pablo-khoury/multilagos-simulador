@@ -7,14 +7,22 @@ import {
   ProposalFinancials,
   DiagnosticSheetData,
   ContractServiceItem,
-  ClientPricingTier
+  ClientPricingTier,
+  ReguaPortfolioType,
+  SetupPaymentMode
 } from '../types';
 import { 
   formatBRL, 
+  formatCleanPercent,
   encodeProposalToUrlParam, 
   calculateDiagnosticMetrics,
   getPricingTierForClientCount,
-  getTieredPlanPrice
+  getTieredPlanPrice,
+  getEffectivePromptDiscountPercent,
+  calculateMonthlyWithPromptDiscount,
+  getSetupBillingDetails,
+  getReguaPlanPrices,
+  getReguaFeaturesForPortfolio
 } from '../utils/calculator';
 import { MULTILAGOS_INFO, DEFAULT_CLIENT_PRICING_TIERS } from '../data/mockData';
 import { exportElementToPdf } from '../utils/pdfGenerator';
@@ -64,6 +72,7 @@ interface ProposalSimulatorProps {
   onUpdateDiagnostic?: (data: DiagnosticSheetData) => void;
   onProceedToClientAcceptance: () => void;
   onUpdateSelectedServices?: (services: ContractServiceItem[]) => void;
+  onUpdateReguaPortfolio?: (portfolio: ReguaPortfolioType) => void;
 }
 
 export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
@@ -81,6 +90,7 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
   onUpdateDiagnostic,
   onProceedToClientAcceptance,
   onUpdateSelectedServices,
+  onUpdateReguaPortfolio,
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
@@ -90,6 +100,14 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
   // Multi-service state
   const asaasPlans = plans.filter((p) => p.track === 'asaas');
   const reguaPlans = plans.filter((p) => p.track === 'regua-n8n');
+
+  // Regua WhatsApp Portfolio pricing mode ('multilagos' = Meta inclusa | 'client' = Portfólio BM do Cliente)
+  const [reguaPortfolio, setReguaPortfolio] = useState<ReguaPortfolioType>(
+    activeProposal.reguaPortfolioType || 'multilagos'
+  );
+
+  // Setup installment pricing preset mode
+  const [installmentMarkupMode, setInstallmentMarkupMode] = useState<'same' | 'table' | 'plus5' | 'plus10' | 'custom'>('same');
 
   // Multi-service checkboxes
   const [includeAsaas, setIncludeAsaas] = useState(true);
@@ -132,10 +150,12 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
     reguaOn: boolean,
     reguaId: PlanId,
     bpoOn: boolean,
-    customList: ContractServiceItem[]
+    customList: ContractServiceItem[],
+    portfolioOverride?: ReguaPortfolioType
   ) => {
     const asaasObj = asaasPlans.find((p) => p.id === asaasId) || currentAsaasPlan;
     const reguaObj = reguaPlans.find((p) => p.id === reguaId) || currentReguaPlan;
+    const activePortfolio = portfolioOverride || reguaPortfolio;
 
     const tieredAsaas = clientCount > 0 ? getTieredPlanPrice(asaasObj.id, clientCount, effectiveTiers) : null;
     const asaasSetup = tieredAsaas?.setupPrice ?? asaasObj.baseSetupPrice;
@@ -157,15 +177,23 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
     }
 
     if (reguaOn) {
+      const reguaPrices = getReguaPlanPrices(reguaObj, activePortfolio);
+      const reguaFeats = getReguaFeaturesForPortfolio(reguaObj, activePortfolio);
+      const portfolioTag = activePortfolio === 'client' ? 'Portfólio do Cliente' : 'Meu Portfólio Multilagos';
+
       items.push({
         id: 'serv-regua',
-        name: `Régua de Cobrança WhatsApp (${reguaObj.name} disparos/mês)`,
+        name: `Régua de Cobrança WhatsApp (${reguaObj.name} disparos/mês · ${portfolioTag})`,
         category: 'regua-n8n',
         planId: reguaObj.id,
-        setupPrice: reguaObj.baseSetupPrice,
-        monthlyPrice: reguaObj.baseMonthlyPrice,
-        description: 'Automação multicanal no WhatsApp via n8n com custos da Meta inclusos.',
-        features: reguaObj.features,
+        reguaPortfolioType: activePortfolio,
+        setupPrice: reguaPrices.setupPrice,
+        monthlyPrice: reguaPrices.monthlyPrice,
+        description:
+          activePortfolio === 'client'
+            ? 'Automação multicanal no WhatsApp via n8n conectada ao Portfólio Meta (BM) do Cliente (tarifas Meta diretas).'
+            : 'Automação multicanal no WhatsApp via n8n no Portfólio Multilagos com custos da Meta inclusos.',
+        features: reguaFeats,
       });
     }
 
@@ -201,21 +229,46 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
     const totalBaseSetup = items.reduce((acc, curr) => acc + (curr.setupPrice || 0), 0);
     const totalBaseMonthly = items.reduce((acc, curr) => acc + (curr.monthlyPrice || 0), 0);
 
-    const setupTotal = fin.setupDiscountApplied 
-      ? Math.max(0, totalBaseSetup - (fin.setupDiscountValue || 0)) 
+    const cashPrice = fin.setupDiscountApplied
+      ? Math.max(0, totalBaseSetup - (fin.setupDiscountValue || 0))
       : totalBaseSetup;
 
-    const monthlyTotal = fin.monthlyDiscountApplied 
-      ? Math.max(0, totalBaseMonthly - (fin.monthlyDiscountValue || 0)) 
+    let instTotal = cashPrice;
+    if (installmentMarkupMode === 'table') {
+      instTotal = totalBaseSetup;
+    } else if (installmentMarkupMode === 'plus5') {
+      instTotal = Number((cashPrice * 1.05).toFixed(2));
+    } else if (installmentMarkupMode === 'plus10') {
+      instTotal = Number((cashPrice * 1.10).toFixed(2));
+    } else if (installmentMarkupMode === 'custom' && typeof fin.setupInstallmentTotal === 'number') {
+      instTotal = fin.setupInstallmentTotal;
+    }
+
+    const setupMode: SetupPaymentMode = fin.setupPaymentMode === 'installments' ? 'installments' : 'cash';
+    const installmentsCount = Math.max(1, fin.setupInstallmentsCount || 3);
+    const setupTotal = setupMode === 'installments' ? instTotal : cashPrice;
+
+    const monthlyTotal = fin.monthlyDiscountApplied
+      ? Math.max(0, totalBaseMonthly - (fin.monthlyDiscountValue || 0))
       : totalBaseMonthly;
+
+    const hasPrompt = fin.hasPromptPaymentDiscount !== false;
+    const promptPct = getEffectivePromptDiscountPercent({ ...fin, hasPromptPaymentDiscount: hasPrompt });
+    const monthlyWithPromptDiscount = calculateMonthlyWithPromptDiscount(monthlyTotal, hasPrompt, promptPct);
 
     onUpdateFinancials({
       ...fin,
       setupPrice: totalBaseSetup,
+      setupCashPrice: cashPrice,
+      setupInstallmentTotal: instTotal,
+      setupInstallmentsCount: installmentsCount,
+      setupPaymentMode: setupMode,
       setupTotal,
       monthlyPrice: totalBaseMonthly,
       monthlyTotal,
-      monthlyWithPromptDiscount: Math.round(monthlyTotal * 0.95),
+      hasPromptPaymentDiscount: hasPrompt,
+      promptPaymentDiscountPercent: promptPct,
+      monthlyWithPromptDiscount,
     });
 
     if (onUpdateSelectedServices) {
@@ -241,14 +294,14 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
   // Sync initial services once on mount if empty
   useEffect(() => {
     if (!activeProposal.selectedServices || activeProposal.selectedServices.length === 0) {
-      updateServicesAndTotals(includeAsaas, selectedAsaasPlanId, includeRegua, selectedReguaPlanId, includeBpo, customServices);
+      updateServicesAndTotals(includeAsaas, selectedAsaasPlanId, includeRegua, selectedReguaPlanId, includeBpo, customServices, reguaPortfolio);
     }
   }, []);
 
-  // Sync pricing whenever client count or pricing tiers change
+  // Sync pricing whenever client count, pricing tiers, or plan catalog change
   useEffect(() => {
-    updateServicesAndTotals(includeAsaas, selectedAsaasPlanId, includeRegua, selectedReguaPlanId, includeBpo, customServices);
-  }, [clientCount, pricingTiers]);
+    updateServicesAndTotals(includeAsaas, selectedAsaasPlanId, includeRegua, selectedReguaPlanId, includeBpo, customServices, reguaPortfolio);
+  }, [clientCount, pricingTiers, plans]);
 
   // Preset Handlers
   const handleSelectPresetCombo = () => {
@@ -305,7 +358,15 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
   const handleSelectReguaPlan = (planId: PlanId) => {
     setSelectedReguaPlanId(planId);
     setIncludeRegua(true);
-    updateServicesAndTotals(includeAsaas, selectedAsaasPlanId, true, planId, includeBpo, customServices);
+    updateServicesAndTotals(includeAsaas, selectedAsaasPlanId, true, planId, includeBpo, customServices, reguaPortfolio);
+  };
+
+  const handleSelectReguaPortfolio = (portfolio: ReguaPortfolioType) => {
+    setReguaPortfolio(portfolio);
+    if (onUpdateReguaPortfolio) {
+      onUpdateReguaPortfolio(portfolio);
+    }
+    updateServicesAndTotals(includeAsaas, selectedAsaasPlanId, includeRegua, selectedReguaPlanId, includeBpo, customServices, portfolio);
   };
 
   const handleAddCustomService = (e: React.FormEvent) => {
@@ -357,47 +418,186 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
     }
   };
 
-  // Discount toggles and inputs
+  // Setup Payment Mode, Cash Price, Installment Total & Parcel Count handlers
+  const computeInstallmentTotalForPreset = (
+    preset: 'same' | 'table' | 'plus5' | 'plus10' | 'custom',
+    cashPrice: number,
+    basePrice: number,
+    fallbackCustom: number
+  ) => {
+    if (preset === 'same') return cashPrice;
+    if (preset === 'table') return basePrice;
+    if (preset === 'plus5') return Number((cashPrice * 1.05).toFixed(2));
+    if (preset === 'plus10') return Number((cashPrice * 1.10).toFixed(2));
+    return fallbackCustom;
+  };
+
+  const handleChangeSetupPaymentMode = (mode: SetupPaymentMode) => {
+    const setupDet = getSetupBillingDetails(fin);
+    const nextTotal = mode === 'installments' ? setupDet.installmentTotal : setupDet.cashPrice;
+    onUpdateFinancials({
+      ...fin,
+      setupPaymentMode: mode,
+      setupCashPrice: setupDet.cashPrice,
+      setupInstallmentTotal: setupDet.installmentTotal,
+      setupInstallmentsCount: setupDet.installmentsCount,
+      setupTotal: nextTotal,
+    });
+  };
+
   const handleToggleSetupDiscount = (applied: boolean) => {
     const discVal = applied ? (fin.setupDiscountValue || 250) : 0;
-    const setupTotal = Math.max(0, fin.setupPrice - discVal);
+    const cashPrice = Math.max(0, fin.setupPrice - discVal);
+    const instTotal = computeInstallmentTotalForPreset(
+      installmentMarkupMode,
+      cashPrice,
+      fin.setupPrice,
+      fin.setupInstallmentTotal ?? cashPrice
+    );
+    const mode: SetupPaymentMode = fin.setupPaymentMode === 'installments' ? 'installments' : 'cash';
     onUpdateFinancials({
       ...fin,
       setupDiscountApplied: applied,
       setupDiscountValue: discVal,
-      setupTotal,
+      setupCashPrice: cashPrice,
+      setupInstallmentTotal: instTotal,
+      setupTotal: mode === 'installments' ? instTotal : cashPrice,
     });
   };
 
   const handleChangeSetupDiscountValue = (val: number) => {
-    const setupTotal = Math.max(0, fin.setupPrice - val);
+    const safeDisc = Math.max(0, val || 0);
+    const cashPrice = Math.max(0, fin.setupPrice - safeDisc);
+    const instTotal = computeInstallmentTotalForPreset(
+      installmentMarkupMode,
+      cashPrice,
+      fin.setupPrice,
+      fin.setupInstallmentTotal ?? cashPrice
+    );
+    const mode: SetupPaymentMode = fin.setupPaymentMode === 'installments' ? 'installments' : 'cash';
     onUpdateFinancials({
       ...fin,
-      setupDiscountValue: val,
-      setupTotal,
+      setupDiscountApplied: safeDisc > 0,
+      setupDiscountValue: safeDisc,
+      setupCashPrice: cashPrice,
+      setupInstallmentTotal: instTotal,
+      setupTotal: mode === 'installments' ? instTotal : cashPrice,
     });
   };
 
+  const handleChangeSetupCashPriceDirect = (val: number) => {
+    const cashPrice = Math.max(0, val || 0);
+    const discVal = Math.max(0, fin.setupPrice - cashPrice);
+    const instTotal = computeInstallmentTotalForPreset(
+      installmentMarkupMode,
+      cashPrice,
+      fin.setupPrice,
+      fin.setupInstallmentTotal ?? cashPrice
+    );
+    const mode: SetupPaymentMode = fin.setupPaymentMode === 'installments' ? 'installments' : 'cash';
+    onUpdateFinancials({
+      ...fin,
+      setupDiscountApplied: discVal > 0,
+      setupDiscountValue: discVal,
+      setupCashPrice: cashPrice,
+      setupInstallmentTotal: instTotal,
+      setupTotal: mode === 'installments' ? instTotal : cashPrice,
+    });
+  };
+
+  const handleSelectInstallmentPreset = (preset: 'same' | 'table' | 'plus5' | 'plus10') => {
+    setInstallmentMarkupMode(preset);
+    const setupDet = getSetupBillingDetails(fin);
+    const instTotal = computeInstallmentTotalForPreset(preset, setupDet.cashPrice, fin.setupPrice, setupDet.installmentTotal);
+    const mode: SetupPaymentMode = fin.setupPaymentMode === 'installments' ? 'installments' : 'cash';
+    onUpdateFinancials({
+      ...fin,
+      setupCashPrice: setupDet.cashPrice,
+      setupInstallmentTotal: instTotal,
+      setupTotal: mode === 'installments' ? instTotal : setupDet.cashPrice,
+    });
+  };
+
+  const handleChangeSetupInstallmentTotalDirect = (val: number) => {
+    setInstallmentMarkupMode('custom');
+    const instTotal = Math.max(0, val || 0);
+    const setupDet = getSetupBillingDetails(fin);
+    const mode: SetupPaymentMode = fin.setupPaymentMode === 'installments' ? 'installments' : 'cash';
+    onUpdateFinancials({
+      ...fin,
+      setupCashPrice: setupDet.cashPrice,
+      setupInstallmentTotal: instTotal,
+      setupTotal: mode === 'installments' ? instTotal : setupDet.cashPrice,
+    });
+  };
+
+  const handleChangeSetupInstallmentsCount = (count: number) => {
+    const safeCount = Math.max(1, Math.min(24, Math.round(count || 1)));
+    const setupDet = getSetupBillingDetails(fin);
+    onUpdateFinancials({
+      ...fin,
+      setupCashPrice: setupDet.cashPrice,
+      setupInstallmentTotal: setupDet.installmentTotal,
+      setupInstallmentsCount: safeCount,
+    });
+  };
+
+  // Monthly Discount, Due Day & Prompt Payment Discount (%) up to Day 05
   const handleToggleMonthlyDiscount = (applied: boolean) => {
     const discVal = applied ? (fin.monthlyDiscountValue || 50) : 0;
     const monthlyTotal = Math.max(0, fin.monthlyPrice - discVal);
+    const hasPrompt = fin.hasPromptPaymentDiscount !== false;
+    const pct = getEffectivePromptDiscountPercent({ ...fin, hasPromptPaymentDiscount: hasPrompt });
     onUpdateFinancials({
       ...fin,
       monthlyDiscountApplied: applied,
       monthlyDiscountValue: discVal,
       monthlyTotal,
-      monthlyWithPromptDiscount: Math.round(monthlyTotal * 0.95),
+      monthlyWithPromptDiscount: calculateMonthlyWithPromptDiscount(monthlyTotal, hasPrompt, pct),
     });
   };
 
   const handleChangeMonthlyDiscountValue = (val: number) => {
     const monthlyTotal = Math.max(0, fin.monthlyPrice - val);
+    const hasPrompt = fin.hasPromptPaymentDiscount !== false;
+    const pct = getEffectivePromptDiscountPercent({ ...fin, hasPromptPaymentDiscount: hasPrompt });
     onUpdateFinancials({
       ...fin,
       monthlyDiscountValue: val,
       monthlyTotal,
-      monthlyWithPromptDiscount: Math.round(monthlyTotal * 0.95),
+      monthlyWithPromptDiscount: calculateMonthlyWithPromptDiscount(monthlyTotal, hasPrompt, pct),
     });
+  };
+
+  const handleTogglePromptDiscount = (enabled: boolean) => {
+    const pct = enabled ? (fin.promptPaymentDiscountPercent && fin.promptPaymentDiscountPercent > 0 ? fin.promptPaymentDiscountPercent : 5) : 0;
+    onUpdateFinancials({
+      ...fin,
+      hasPromptPaymentDiscount: enabled,
+      promptPaymentDiscountPercent: enabled ? pct : (fin.promptPaymentDiscountPercent || 5),
+      monthlyWithPromptDiscount: calculateMonthlyWithPromptDiscount(fin.monthlyTotal, enabled, pct),
+    });
+  };
+
+  const handleChangePromptDiscountPercent = (pctValue: number) => {
+    const safePct = Math.max(0, Math.min(100, Number(pctValue) || 0));
+    const enabled = safePct > 0;
+    onUpdateFinancials({
+      ...fin,
+      hasPromptPaymentDiscount: enabled,
+      promptPaymentDiscountPercent: safePct,
+      monthlyWithPromptDiscount: calculateMonthlyWithPromptDiscount(fin.monthlyTotal, enabled, safePct),
+    });
+  };
+
+  const openExternalHref = (href: string) => {
+    const a = document.createElement('a');
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   // Link and Sharing
@@ -415,17 +615,28 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
       .map((s) => s.name)
       .join(' + ') || currentAsaasPlan.name;
 
+    const setupDet = getSetupBillingDetails(fin);
+    const promptPct = getEffectivePromptDiscountPercent(fin);
+    const hasPrompt = fin.hasPromptPaymentDiscount !== false && promptPct > 0;
+    const promptLine = hasPrompt
+      ? ` (ou ${formatBRL(fin.monthlyWithPromptDiscount)} com ${formatCleanPercent(promptPct)}% de desconto até o dia 05)`
+      : '';
+    const setupLine =
+      setupDet.mode === 'installments'
+        ? `${setupDet.installmentsCount}x de ${formatBRL(setupDet.installmentValue)} (Total parcelado: ${formatBRL(setupDet.installmentTotal)} | À vista: ${formatBRL(setupDet.cashPrice)})`
+        : `${formatBRL(setupDet.cashPrice)} à vista (ou em ${setupDet.installmentsCount}x de ${formatBRL(setupDet.installmentValue)})`;
+
     const text = encodeURIComponent(
       `Olá! Aqui é o ${MULTILAGOS_INFO.representativeName} da Multilagos (Negócios & Tecnologia).\n\n` +
       `Conforme alinhamos em nossa reunião, elaborei sua proposta comercial personalizada (Nº ${activeProposal.id}):\n` +
       `• Serviços Contratados: ${serviceNames}\n` +
       `• Vigência: Tempo Indeterminado (sem vencimento preestabelecido)\n` +
-      `• Mensalidade: ${formatBRL(fin.monthlyTotal)} (ou ${formatBRL(fin.monthlyWithPromptDiscount)} pagando até o dia 05)\n` +
-      `• Taxa de Setup / Implantação: ${formatBRL(fin.setupTotal)}\n\n` +
+      `• Mensalidade: ${formatBRL(fin.monthlyTotal)}${promptLine}\n` +
+      `• Taxa de Setup / Implantação: ${setupLine}\n\n` +
       `Acesse o link seguro exclusivo para conferir o contrato mestre, preencher os dados da sua empresa e confirmar o aceite digital:\n` +
       `${clientShareUrl}`
     );
-    window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
+    openExternalHref(`https://api.whatsapp.com/send?text=${text}`);
   };
 
   const handleSendEmailToClient = () => {
@@ -433,14 +644,18 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
       .map((s) => s.name)
       .join(' + ') || currentAsaasPlan.name;
 
+    const setupDet = getSetupBillingDetails(fin);
+    const promptPct = getEffectivePromptDiscountPercent(fin);
+    const hasPrompt = fin.hasPromptPaymentDiscount !== false && promptPct > 0;
+
     const subject = encodeURIComponent(`Proposta Comercial Multilagos - ${serviceNames} [Nº ${activeProposal.id}]`);
     const body = encodeURIComponent(
       `Prezado(a),\n\n` +
       `Conforme nossa reunião, segue o link seguro da sua proposta comercial e Contrato Mestre vinculado (Nº ${activeProposal.contractMasterId}):\n\n` +
       `- Serviços: ${serviceNames}\n` +
       `- Vigência: Tempo Indeterminado (sem vencimento preestabelecido; aviso prévio de 30 dias)\n` +
-      `- Mensalidade Total: ${formatBRL(fin.monthlyTotal)}\n` +
-      `- Implantação Total: ${formatBRL(fin.setupTotal)}\n\n` +
+      `- Mensalidade Total: ${formatBRL(fin.monthlyTotal)} (Vencimento dia ${fin.dueDay || 10})${hasPrompt ? ` | Pagando até dia 05 (${formatCleanPercent(promptPct)}% desc.): ${formatBRL(fin.monthlyWithPromptDiscount)}` : ''}\n` +
+      `- Implantação / Setup: ${setupDet.fullBillingNote}\n\n` +
       `Para formalizar a contratação e fazer o download dos documentos em PDF, acesse o link:\n` +
       `${clientShareUrl}\n\n` +
       `Atenciosamente,\n` +
@@ -448,7 +663,7 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
       `${MULTILAGOS_INFO.companyName}\n` +
       `${MULTILAGOS_INFO.phone}`
     );
-    window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
+    openExternalHref(`mailto:?subject=${subject}&body=${body}`);
   };
 
   const handleDownloadConsultantPdf = async () => {
@@ -773,13 +988,65 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
               </p>
 
               {includeRegua && (
-                <div className="mt-4 space-y-3 pt-3 border-t border-slate-700/80">
+                <div className="mt-4 space-y-3.5 pt-3 border-t border-slate-700/80">
+                  {/* Seletor de Portfólio da Régua WhatsApp (Meu Portfólio vs Portfólio do Cliente) */}
+                  <div className="p-3 rounded-xl bg-[#111F24] border border-slate-700/90 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                        Modalidade de Portfólio API WhatsApp (Precificação):
+                      </span>
+                      <span className="text-[10px] font-mono text-emerald-400">
+                        {reguaPortfolio === 'client' ? 'Tarifas Meta Diretas' : 'Custos Meta Inclusos'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSelectReguaPortfolio('multilagos')}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          reguaPortfolio === 'multilagos'
+                            ? 'bg-[#192A32] border-[#D40B3A] ring-1 ring-[#D40B3A] text-white shadow'
+                            : 'bg-[#16242A] border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white">Meu Portfólio (Multilagos)</span>
+                          {reguaPortfolio === 'multilagos' && <Check className="w-3.5 h-3.5 text-[#D40B3A]" />}
+                        </div>
+                        <span className="text-[10px] text-emerald-400 block mt-0.5 font-semibold">
+                          ✓ Custos da Meta inclusos na mensalidade
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleSelectReguaPortfolio('client')}
+                        className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                          reguaPortfolio === 'client'
+                            ? 'bg-[#192A32] border-[#D40B3A] ring-1 ring-[#D40B3A] text-white shadow'
+                            : 'bg-[#16242A] border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-white">Portfólio do Cliente (BM Próprio)</span>
+                          {reguaPortfolio === 'client' && <Check className="w-3.5 h-3.5 text-[#D40B3A]" />}
+                        </div>
+                        <span className="text-[10px] text-amber-300 block mt-0.5 font-semibold">
+                          Mensalidade reduzida · Meta paga pelo cliente
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
                   <span className="text-[11px] font-semibold text-slate-300 block">
-                    Selecione a franquia mensal de disparos:
+                    Selecione a franquia mensal de disparos ({reguaPortfolio === 'client' ? 'Tabela Portfólio do Cliente' : 'Tabela Meu Portfólio Multilagos'}):
                   </span>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {reguaPlans.map((p) => {
                       const isSel = p.id === selectedReguaPlanId;
+                      const pPrices = getReguaPlanPrices(p, reguaPortfolio);
+                      const pFeats = getReguaFeaturesForPortfolio(p, reguaPortfolio);
                       return (
                         <button
                           key={p.id}
@@ -793,13 +1060,13 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
                         >
                           <span className="text-xs font-bold block">{p.name} msgs</span>
                           <span className="text-xs font-mono font-extrabold text-[#D40B3A] block mt-0.5">
-                            {formatBRL(p.baseMonthlyPrice)}/m
+                            {formatBRL(pPrices.monthlyPrice)}/m
                           </span>
                           <span className="text-[10px] text-slate-400 block">
-                            Setup: {formatBRL(p.baseSetupPrice)}
+                            Setup: {formatBRL(pPrices.setupPrice)}
                           </span>
                           <span className="text-[10px] text-emerald-400 font-semibold block mt-1">
-                            ✓ {p.features.length} itens
+                            ✓ {pFeats.length} itens
                           </span>
                         </button>
                       );
@@ -807,32 +1074,37 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
                   </div>
 
                   {/* Checklist Oficial da Régua WhatsApp Ativa */}
-                  <div className="p-3.5 rounded-xl bg-[#111F24] border border-slate-700/90 space-y-2.5">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-800 gap-1.5">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span className="text-xs font-bold text-white font-display">
-                          Checklist de Entregáveis · Franquia {currentReguaPlan.name} ({currentReguaPlan.features.length} itens):
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
-                        {currentReguaPlan.sla}
-                      </span>
-                    </div>
-
-                    <p className="text-[11px] text-slate-400 italic">
-                      "{currentReguaPlan.headline}"
-                    </p>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
-                      {currentReguaPlan.features.map((feat, fIdx) => (
-                        <div key={fIdx} className="flex items-start gap-1.5 bg-[#16242A]/80 p-1.5 rounded-lg border border-slate-800/80">
-                          <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                          <span className="text-slate-200 text-[11px] leading-tight">{feat}</span>
+                  {(() => {
+                    const activeReguaFeatures = getReguaFeaturesForPortfolio(currentReguaPlan, reguaPortfolio);
+                    return (
+                      <div className="p-3.5 rounded-xl bg-[#111F24] border border-slate-700/90 space-y-2.5">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-800 gap-1.5">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                            <span className="text-xs font-bold text-white font-display">
+                              Checklist · Franquia {currentReguaPlan.name} ({reguaPortfolio === 'client' ? 'Portfólio Cliente' : 'Portfólio Multilagos'}):
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                            {currentReguaPlan.sla}
+                          </span>
                         </div>
-                      ))}
-                    </div>
-                  </div>
+
+                        <p className="text-[11px] text-slate-400 italic">
+                          "{currentReguaPlan.headline}"
+                        </p>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs">
+                          {activeReguaFeatures.map((feat, fIdx) => (
+                            <div key={fIdx} className="flex items-start gap-1.5 bg-[#16242A]/80 p-1.5 rounded-lg border border-slate-800/80">
+                              <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                              <span className="text-slate-200 text-[11px] leading-tight">{feat}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
@@ -1570,129 +1842,422 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             
-            {/* Setup Controls */}
-            <div className="p-5 rounded-xl bg-[#111F24] border border-slate-800 space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white uppercase tracking-wider">
-                  1. Taxa de Implantação (Setup Combinado)
-                </span>
-                <span className="text-xs font-mono text-slate-400">
-                  Tabela: {formatBRL(fin.setupPrice)}
-                </span>
-              </div>
-
-              <div className="space-y-3 text-xs">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={fin.setupDiscountApplied}
-                    onChange={(e) => handleToggleSetupDiscount(e.target.checked)}
-                    className="w-4 h-4 rounded text-[#D40B3A] border-slate-700 accent-[#D40B3A]"
-                  />
-                  <span className="text-slate-200 font-semibold">
-                    Aplicar desconto sobre o setup
-                  </span>
-                </label>
-
-                {fin.setupDiscountApplied && (
-                  <div className="space-y-2 pt-1 pl-6">
-                    <div>
-                      <label className="text-slate-400 block mb-1">Valor do Desconto (R$):</label>
-                      <input
-                        type="number"
-                        value={fin.setupDiscountValue}
-                        onChange={(e) => handleChangeSetupDiscountValue(Number(e.target.value))}
-                        className="w-full px-3 py-1.5 bg-[#16242A] border border-slate-700 rounded-lg text-white font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-400 block mb-1">Motivo do Desconto no Contrato:</label>
-                      <input
-                        type="text"
-                        placeholder="Ex: Condição especial de reunião"
-                        value={fin.setupDiscountReason || ''}
-                        onChange={(e) => onUpdateFinancials({ ...fin, setupDiscountReason: e.target.value })}
-                        className="w-full px-3 py-1.5 bg-[#16242A] border border-slate-700 rounded-lg text-white"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
-                  <span className="text-slate-400">Setup Final Contratado:</span>
-                  <span className="text-xl font-bold text-white font-mono">
-                    {formatBRL(fin.setupTotal)}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Monthly Controls */}
-            <div className="p-5 rounded-xl bg-[#111F24] border border-slate-800 space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white uppercase tracking-wider">
-                  2. Mensalidade Consolidada
-                </span>
-                <span className="text-xs font-mono text-slate-400">
-                  Tabela: {formatBRL(fin.monthlyPrice)}/mês
-                </span>
-              </div>
-
-              <div className="space-y-3 text-xs">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={fin.monthlyDiscountApplied}
-                    onChange={(e) => handleToggleMonthlyDiscount(e.target.checked)}
-                    className="w-4 h-4 rounded text-[#D40B3A] border-slate-700 accent-[#D40B3A]"
-                  />
-                  <span className="text-slate-200 font-semibold">
-                    Aplicar desconto sobre a mensalidade
-                  </span>
-                </label>
-
-                {fin.monthlyDiscountApplied && (
-                  <div className="space-y-2 pt-1 pl-6">
-                    <div>
-                      <label className="text-slate-400 block mb-1">Valor do Desconto Mensal (R$):</label>
-                      <input
-                        type="number"
-                        value={fin.monthlyDiscountValue}
-                        onChange={(e) => handleChangeMonthlyDiscountValue(Number(e.target.value))}
-                        className="w-full px-3 py-1.5 bg-[#16242A] border border-slate-700 rounded-lg text-white font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-slate-400 block mb-1">Motivo do Desconto no Contrato:</label>
-                      <input
-                        type="text"
-                        placeholder="Ex: Parceria estratégica anual"
-                        value={fin.monthlyDiscountReason || ''}
-                        onChange={(e) => onUpdateFinancials({ ...fin, monthlyDiscountReason: e.target.value })}
-                        className="w-full px-3 py-1.5 bg-[#16242A] border border-slate-700 rounded-lg text-white"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div className="pt-2 border-t border-slate-800 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-400">Mensalidade Total Contratada:</span>
-                    <span className="text-xl font-bold text-[#D40B3A] font-mono">
-                      {formatBRL(fin.monthlyTotal)}/mês
+            {/* Setup Controls (À Vista + Parcelamento + Quantidade de Parcelas) */}
+            {(() => {
+              const setupDet = getSetupBillingDetails(fin);
+              const parcelPresets = [2, 3, 4, 6, 10, 12];
+              return (
+                <div className="p-5 rounded-xl bg-[#111F24] border border-slate-800 space-y-4">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      1. Taxa de Implantação (Setup · À Vista & Parcelado)
+                    </span>
+                    <span className="text-xs font-mono text-slate-400">
+                      Tabela: {formatBRL(fin.setupPrice)}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-[11px] text-emerald-400 pt-1">
-                    <span>Com pontualidade (5% até dia 05):</span>
-                    <span className="font-mono font-bold">
-                      {formatBRL(fin.monthlyWithPromptDiscount)}/mês
+
+                  {/* Modalidade Ativa do Setup */}
+                  <div className="space-y-1.5 text-xs">
+                    <span className="text-[11px] font-bold text-slate-300 block">
+                      Modalidade Contratada para Subir Cobrança no Asaas:
+                    </span>
+                    <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-[#16242A] border border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => handleChangeSetupPaymentMode('cash')}
+                        className={`py-2 px-3 rounded-lg font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          setupDet.mode === 'cash'
+                            ? 'bg-[#D40B3A] text-white shadow'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <DollarSign className="w-3.5 h-3.5" />
+                        <span>Pagamento À Vista</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleChangeSetupPaymentMode('installments')}
+                        className={`py-2 px-3 rounded-lg font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          setupDet.mode === 'installments'
+                            ? 'bg-[#D40B3A] text-white shadow'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <CreditCard className="w-3.5 h-3.5" />
+                        <span>Setup Parcelado ({setupDet.installmentsCount}x)</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Preço à Vista + Desconto */}
+                  <div className="p-3.5 rounded-xl bg-[#16242A] border border-slate-700/80 space-y-3 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                        <span>Preço do Setup À Vista (R$):</span>
+                        {setupDet.mode === 'cash' && (
+                          <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-700">
+                            ATIVO
+                          </span>
+                        )}
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="10"
+                        value={setupDet.cashPrice}
+                        onChange={(e) => handleChangeSetupCashPriceDirect(Number(e.target.value))}
+                        className="w-32 px-2.5 py-1 bg-[#111F24] border border-slate-700 rounded-lg text-right text-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-[#D40B3A]"
+                      />
+                    </div>
+
+                    <label className="flex items-center gap-2 cursor-pointer pt-1 border-t border-slate-800">
+                      <input
+                        type="checkbox"
+                        checked={fin.setupDiscountApplied}
+                        onChange={(e) => handleToggleSetupDiscount(e.target.checked)}
+                        className="w-4 h-4 rounded text-[#D40B3A] border-slate-700 accent-[#D40B3A]"
+                      />
+                      <span className="text-slate-300 font-semibold text-[11px]">
+                        Exibir desconto comercial sobre a tabela ({formatBRL(fin.setupPrice)})
+                      </span>
+                    </label>
+
+                    {fin.setupDiscountApplied && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        <div>
+                          <label className="text-slate-400 block mb-1 text-[11px]">Desconto Concedido (R$):</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={fin.setupDiscountValue}
+                            onChange={(e) => handleChangeSetupDiscountValue(Number(e.target.value))}
+                            className="w-full px-2.5 py-1.5 bg-[#111F24] border border-slate-700 rounded-lg text-white font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-slate-400 block mb-1 text-[11px]">Motivo na Proposta:</label>
+                          <input
+                            type="text"
+                            placeholder="Ex: Condição à vista reunião"
+                            value={fin.setupDiscountReason || ''}
+                            onChange={(e) => onUpdateFinancials({ ...fin, setupDiscountReason: e.target.value })}
+                            className="w-full px-2.5 py-1.5 bg-[#111F24] border border-slate-700 rounded-lg text-white"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Preço Parcelado + Quantidade de Parcelas */}
+                  <div className="p-3.5 rounded-xl bg-[#16242A] border border-slate-700/80 space-y-3 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                        <span>Preço Total do Setup Parcelado (R$):</span>
+                        {setupDet.mode === 'installments' && (
+                          <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-700">
+                            ATIVO
+                          </span>
+                        )}
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="10"
+                        value={setupDet.installmentTotal}
+                        onChange={(e) => handleChangeSetupInstallmentTotalDirect(Number(e.target.value))}
+                        className="w-32 px-2.5 py-1 bg-[#111F24] border border-slate-700 rounded-lg text-right text-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-[#D40B3A]"
+                      />
+                    </div>
+
+                    {/* Atalhos rápidos para compor o preço parcelado */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] text-slate-400 mr-1">Ajuste rápido:</span>
+                      {[
+                        { id: 'same', label: 'Sem juros (= À vista)' },
+                        { id: 'table', label: `Tabela (${formatBRL(fin.setupPrice)})` },
+                        { id: 'plus5', label: '+5%' },
+                        { id: 'plus10', label: '+10%' },
+                      ].map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => handleSelectInstallmentPreset(p.id as 'same' | 'table' | 'plus5' | 'plus10')}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
+                            installmentMarkupMode === p.id
+                              ? 'bg-[#D40B3A] border-[#D40B3A] text-white'
+                              : 'bg-[#111F24] border-slate-700 text-slate-300 hover:border-slate-500'
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Quantidade de Parcelas */}
+                    <div className="pt-2 border-t border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-slate-300">Quantidade de Parcelas:</span>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min="1"
+                            max="24"
+                            value={setupDet.installmentsCount}
+                            onChange={(e) => handleChangeSetupInstallmentsCount(Number(e.target.value))}
+                            className="w-16 px-2 py-1 bg-[#111F24] border border-slate-700 rounded text-center text-white font-mono font-bold"
+                          />
+                          <span className="text-[11px] text-slate-400">parcelas</span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap gap-1.5">
+                        {parcelPresets.map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => handleChangeSetupInstallmentsCount(n)}
+                            className={`flex-1 min-w-[40px] py-1 rounded-lg text-xs font-mono font-bold border transition-colors cursor-pointer ${
+                              setupDet.installmentsCount === n
+                                ? 'bg-[#D40B3A] border-[#D40B3A] text-white'
+                                : 'bg-[#111F24] border-slate-700 text-slate-300 hover:text-white'
+                            }`}
+                          >
+                            {n}x
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Resumo pronto para subir cobrança */}
+                    <div className="p-2.5 rounded-lg bg-[#111F24] border border-emerald-800/60 flex items-center justify-between">
+                      <span className="text-[11px] text-slate-300">Valor da Parcela no Asaas:</span>
+                      <span className="font-mono font-extrabold text-emerald-400 text-sm">
+                        {setupDet.installmentsCount}x de {formatBRL(setupDet.installmentValue)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Permitir escolha pelo cliente no Portal */}
+                  <label className="flex items-center gap-2 cursor-pointer text-[11px] text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={fin.allowClientChooseSetupMode !== false}
+                      onChange={(e) => onUpdateFinancials({ ...fin, allowClientChooseSetupMode: e.target.checked })}
+                      className="w-4 h-4 rounded text-[#D40B3A] accent-[#D40B3A]"
+                    />
+                    <span>Permitir que o cliente alterne entre À Vista e Parcelado na tela de aceite</span>
+                  </label>
+
+                  {/* Rodapé consolidado do Setup */}
+                  <div className="pt-2.5 border-t border-slate-800 flex items-center justify-between text-xs">
+                    <div>
+                      <span className="text-slate-400 block">Setup Contratado ({setupDet.mode === 'installments' ? 'Parcelado' : 'À Vista'}):</span>
+                      <span className="text-[10.5px] text-slate-500 font-mono">
+                        À vista: {formatBRL(setupDet.cashPrice)} · Parcelado: {setupDet.installmentsCount}x {formatBRL(setupDet.installmentValue)}
+                      </span>
+                    </div>
+                    <span className="text-xl font-bold text-white font-mono">
+                      {setupDet.mode === 'installments'
+                        ? `${setupDet.installmentsCount}x ${formatBRL(setupDet.installmentValue)}`
+                        : formatBRL(setupDet.cashPrice)}
                     </span>
                   </div>
                 </div>
-              </div>
-            </div>
+              );
+            })()}
+
+            {/* Monthly Controls + % Desconto até Dia 05 */}
+            {(() => {
+              const promptPct = getEffectivePromptDiscountPercent(fin);
+              const hasPrompt = fin.hasPromptPaymentDiscount !== false && promptPct > 0;
+              const pctPresets = [3, 5, 7, 10];
+              return (
+                <div className="p-5 rounded-xl bg-[#111F24] border border-slate-800 space-y-4">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                    <span className="text-xs font-bold text-white uppercase tracking-wider">
+                      2. Mensalidade Consolidada & Desconto Dia 05
+                    </span>
+                    <span className="text-xs font-mono text-slate-400">
+                      Tabela: {formatBRL(fin.monthlyPrice)}/mês
+                    </span>
+                  </div>
+
+                  <div className="space-y-3.5 text-xs">
+                    {/* Desconto Fixo Comercial sobre Mensalidade */}
+                    <div className="p-3.5 rounded-xl bg-[#16242A] border border-slate-700/80 space-y-2.5">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={fin.monthlyDiscountApplied}
+                          onChange={(e) => handleToggleMonthlyDiscount(e.target.checked)}
+                          className="w-4 h-4 rounded text-[#D40B3A] border-slate-700 accent-[#D40B3A]"
+                        />
+                        <span className="text-slate-200 font-semibold">
+                          Aplicar desconto fixo sobre a mensalidade de tabela
+                        </span>
+                      </label>
+
+                      {fin.monthlyDiscountApplied && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                          <div>
+                            <label className="text-slate-400 block mb-1 text-[11px]">Desconto Mensal (R$):</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={fin.monthlyDiscountValue}
+                              onChange={(e) => handleChangeMonthlyDiscountValue(Number(e.target.value))}
+                              className="w-full px-2.5 py-1.5 bg-[#111F24] border border-slate-700 rounded-lg text-white font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-slate-400 block mb-1 text-[11px]">Motivo na Proposta:</label>
+                            <input
+                              type="text"
+                              placeholder="Ex: Parceria comercial"
+                              value={fin.monthlyDiscountReason || ''}
+                              onChange={(e) => onUpdateFinancials({ ...fin, monthlyDiscountReason: e.target.value })}
+                              className="w-full px-2.5 py-1.5 bg-[#111F24] border border-slate-700 rounded-lg text-white"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Dia de Vencimento Padrão */}
+                    <div className="p-3.5 rounded-xl bg-[#16242A] border border-slate-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <span className="font-bold text-slate-200 block">Dia de Vencimento Padrão:</span>
+                        <span className="text-[10.5px] text-slate-400">Para subir a assinatura recorrente no Asaas</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {[10, 15, 20].map((d) => (
+                          <button
+                            key={d}
+                            type="button"
+                            onClick={() => onUpdateFinancials({ ...fin, dueDay: d })}
+                            className={`px-2.5 py-1 rounded-lg font-mono font-bold text-xs border transition-colors cursor-pointer ${
+                              (fin.dueDay || 10) === d
+                                ? 'bg-[#D40B3A] border-[#D40B3A] text-white'
+                                : 'bg-[#111F24] border-slate-700 text-slate-300 hover:text-white'
+                            }`}
+                          >
+                            Dia {d}
+                          </button>
+                        ))}
+                        <input
+                          type="number"
+                          min="1"
+                          max="28"
+                          value={fin.dueDay || 10}
+                          onChange={(e) =>
+                            onUpdateFinancials({
+                              ...fin,
+                              dueDay: Math.max(1, Math.min(28, Number(e.target.value) || 10)),
+                            })
+                          }
+                          className="w-14 px-2 py-1 bg-[#111F24] border border-slate-700 rounded-lg text-center text-white font-mono font-bold"
+                          title="Dia personalizado de vencimento"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Configurador do % de Desconto até o Dia 05 */}
+                    <div className="p-3.5 rounded-xl bg-[#16242A] border border-emerald-800/60 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={fin.hasPromptPaymentDiscount !== false}
+                            onChange={(e) => handleTogglePromptDiscount(e.target.checked)}
+                            className="w-4 h-4 rounded text-emerald-500 accent-emerald-500"
+                          />
+                          <span className="text-slate-100 font-bold">
+                            Desconto de Pontualidade (Pagamento até o dia 05)
+                          </span>
+                        </label>
+                        {hasPrompt && (
+                          <span className="text-[11px] font-mono font-extrabold text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-700">
+                            -{formatCleanPercent(promptPct)}% ATIVO
+                          </span>
+                        )}
+                      </div>
+
+                      {fin.hasPromptPaymentDiscount !== false && (
+                        <div className="space-y-2.5 pt-2 border-t border-slate-800">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-[11px] text-slate-300 font-semibold">
+                              Percentual de Desconto até o Dia 05 (%):
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              {pctPresets.map((pctOpt) => (
+                                <button
+                                  key={pctOpt}
+                                  type="button"
+                                  onClick={() => handleChangePromptDiscountPercent(pctOpt)}
+                                  className={`px-2.5 py-1 rounded-lg font-mono font-bold text-xs border transition-colors cursor-pointer ${
+                                    promptPct === pctOpt
+                                      ? 'bg-emerald-600 border-emerald-500 text-white'
+                                      : 'bg-[#111F24] border-slate-700 text-slate-300 hover:text-white'
+                                  }`}
+                                >
+                                  {pctOpt}%
+                                </button>
+                              ))}
+                              <div className="flex items-center gap-1 bg-[#111F24] border border-slate-700 rounded-lg px-2 py-1">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  step="0.5"
+                                  value={fin.promptPaymentDiscountPercent ?? 5}
+                                  onChange={(e) => handleChangePromptDiscountPercent(Number(e.target.value))}
+                                  className="w-12 bg-transparent text-right text-emerald-400 font-mono font-bold focus:outline-none"
+                                />
+                                <span className="text-slate-400 font-mono font-bold">%</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-800/60 flex items-center justify-between">
+                            <div>
+                              <span className="text-[11px] text-emerald-200 font-semibold block">
+                                Valor na Proposta (Pagando até o dia 05):
+                              </span>
+                              <span className="text-[10px] text-emerald-300/80">
+                                Desconto de {formatBRL(Math.max(0, fin.monthlyTotal - fin.monthlyWithPromptDiscount))}/mês refletido no PDF
+                              </span>
+                            </div>
+                            <span className="text-base font-extrabold text-emerald-400 font-mono">
+                              {formatBRL(fin.monthlyWithPromptDiscount)}/mês
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-2.5 border-t border-slate-800 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Mensalidade Contratada (Venc. dia {fin.dueDay || 10}):</span>
+                        <span className="text-xl font-bold text-[#D40B3A] font-mono">
+                          {formatBRL(fin.monthlyTotal)}/mês
+                        </span>
+                      </div>
+                      {hasPrompt && (
+                        <div className="flex items-center justify-between text-[11px] text-emerald-400 pt-0.5">
+                          <span>Pagando até o dia 05 ({formatCleanPercent(promptPct)}% de desconto):</span>
+                          <span className="font-mono font-bold">
+                            {formatBRL(fin.monthlyWithPromptDiscount)}/mês
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
           </div>
 
@@ -1816,6 +2381,7 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
                     proposal={activeProposal}
                     clientInfo={activeProposal.clientInfo}
                     currentPlan={currentReguaPlan}
+                    allPlans={plans}
                     signatureData={activeProposal.signature}
                     isSigned={false}
                   />

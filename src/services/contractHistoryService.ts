@@ -1,4 +1,10 @@
-import { CommercialProposal, ClientInfo } from '../types';
+import { CommercialProposal, ClientInfo, ReguaPortfolioType, SetupPaymentMode } from '../types';
+import {
+  getSetupBillingDetails,
+  getEffectivePromptDiscountPercent,
+  calculateMonthlyWithPromptDiscount,
+  formatCleanPercent,
+} from '../utils/calculator';
 import JSZip from 'jszip';
 
 export interface SavedContractRecord {
@@ -17,9 +23,20 @@ export interface SavedContractRecord {
   role?: string;
   address?: string;
 
-  // Financials
+  // Financials & Asaas Billing Upload Details
   setupTotal: number;
+  setupPaymentMode?: SetupPaymentMode;
+  setupCashPrice?: number;
+  setupInstallmentTotal?: number;
+  setupInstallmentsCount?: number;
+  setupInstallmentValue?: number;
+  setupConditionSummary?: string;
   monthlyTotal: number;
+  dueDay?: number;
+  hasPromptPaymentDiscount?: boolean;
+  promptPaymentDiscountPercent?: number;
+  monthlyWithPromptDiscount?: number;
+  reguaPortfolioType?: ReguaPortfolioType;
   planId: string;
   serviceTrack: string;
   contractDurationText: string;
@@ -177,6 +194,17 @@ export const saveContractToHistory = async (
     hasMsa = await storePdfBlobInDb(`contract_${proposal.id}`, contractBlob);
   }
 
+  const setupDetails = getSetupBillingDetails(proposal.financials);
+  const promptPct = getEffectivePromptDiscountPercent(proposal.financials);
+  const hasPrompt = proposal.financials.hasPromptPaymentDiscount !== false && promptPct > 0;
+  const monthlyPromptVal =
+    typeof proposal.financials.monthlyWithPromptDiscount === 'number' && hasPrompt
+      ? proposal.financials.monthlyWithPromptDiscount
+      : calculateMonthlyWithPromptDiscount(proposal.financials.monthlyTotal, hasPrompt, promptPct);
+
+  const reguaServ = proposal.selectedServices?.find((s) => s.category === 'regua-n8n');
+  const resolvedPortfolio = reguaServ?.reguaPortfolioType || proposal.reguaPortfolioType;
+
   const record: SavedContractRecord = {
     id: proposal.id,
     contractMasterId: proposal.contractMasterId || `MSA-2026-${proposal.id.split('-').pop() || '001'}`,
@@ -193,8 +221,19 @@ export const saveContractToHistory = async (
     role: proposal.clientInfo.contactRole,
     address: proposal.clientInfo.address,
 
-    setupTotal: proposal.financials.setupTotal,
+    setupTotal: setupDetails.contractedTotal,
+    setupPaymentMode: setupDetails.mode,
+    setupCashPrice: setupDetails.cashPrice,
+    setupInstallmentTotal: setupDetails.installmentTotal,
+    setupInstallmentsCount: setupDetails.installmentsCount,
+    setupInstallmentValue: setupDetails.installmentValue,
+    setupConditionSummary: setupDetails.shortSummary,
     monthlyTotal: proposal.financials.monthlyTotal,
+    dueDay: proposal.financials.dueDay || 10,
+    hasPromptPaymentDiscount: hasPrompt,
+    promptPaymentDiscountPercent: promptPct,
+    monthlyWithPromptDiscount: monthlyPromptVal,
+    reguaPortfolioType: resolvedPortfolio,
     planId: proposal.planId,
     serviceTrack: proposal.serviceTrack,
     contractDurationText: proposal.contractDurationText || 'Tempo Indeterminado',
@@ -353,39 +392,81 @@ export const exportHistoryToCsvString = (records?: SavedContractRecord[]): strin
     'Endereco',
     'Plano Contratado',
     'Esteira de Servicos',
+    'Portfolio Regua WhatsApp',
     'Duracao do Contrato',
-    'Valor Setup (R$)',
+    'Modalidade Setup',
+    'Setup a Vista (R$)',
+    'Setup Parcelado Total (R$)',
+    'Qtd Parcelas Setup',
+    'Valor Parcela Setup (R$)',
+    'Valor Setup Contratado (R$)',
+    'Dia Vencimento Mensal',
     'Valor Mensalidade (R$)',
+    '% Desc. ate Dia 05',
+    'Mensalidade ate Dia 05 (R$)',
     'Hash Verificacao Digital',
     'IP do Signatario',
     'Tipo de Assinatura',
     'Sincronizado Google Drive',
   ];
 
-  const rows = list.map((r) => [
-    `"${r.id}"`,
-    `"${r.contractMasterId}"`,
-    `"${r.signedAt}"`,
-    `"${r.companyName.replace(/"/g, '""')}"`,
-    `"${(r.tradeName || '').replace(/"/g, '""')}"`,
-    `"${r.cnpj}"`,
-    `"${r.stateRegistration || ''}"`,
-    `"${r.contactName.replace(/"/g, '""')}"`,
-    `"${r.cpf}"`,
-    `"${r.email}"`,
-    `"${r.phone}"`,
-    `"${(r.role || '').replace(/"/g, '""')}"`,
-    `"${(r.address || '').replace(/"/g, '""')}"`,
-    `"${r.planId}"`,
-    `"${r.serviceTrack}"`,
-    `"${r.contractDurationText}"`,
-    `"${r.setupTotal.toFixed(2).replace('.', ',')}"`,
-    `"${r.monthlyTotal.toFixed(2).replace('.', ',')}"`,
-    `"${r.verificationHash}"`,
-    `"${r.signerIp}"`,
-    `"${r.signatureType === 'draw' ? 'Desenho na Tela' : 'Digitada'}"`,
-    `"${r.syncedToGoogle ? 'Sim' : 'Pendente'}"`,
-  ]);
+  const rows = list.map((r) => {
+    const fin = r.proposal?.financials;
+    const setupDet = fin ? getSetupBillingDetails(fin) : null;
+    const mode = r.setupPaymentMode || setupDet?.mode || 'cash';
+    const cashVal = r.setupCashPrice ?? setupDet?.cashPrice ?? r.setupTotal;
+    const instTotal = r.setupInstallmentTotal ?? setupDet?.installmentTotal ?? r.setupTotal;
+    const instCount = r.setupInstallmentsCount ?? setupDet?.installmentsCount ?? 1;
+    const instVal = r.setupInstallmentValue ?? setupDet?.installmentValue ?? r.setupTotal;
+    const dueDay = r.dueDay ?? fin?.dueDay ?? 10;
+    const pct = r.promptPaymentDiscountPercent ?? (fin ? getEffectivePromptDiscountPercent(fin) : 5);
+    const hasPrompt = r.hasPromptPaymentDiscount ?? (fin ? fin.hasPromptPaymentDiscount !== false && pct > 0 : true);
+    const promptVal =
+      r.monthlyWithPromptDiscount ??
+      calculateMonthlyWithPromptDiscount(r.monthlyTotal, hasPrompt, pct);
+    const hasRegua =
+      r.serviceTrack === 'esteira-regua-n8n' ||
+      r.proposal?.selectedServices?.some((s) => s.category === 'regua-n8n');
+    const portfolioLabel = hasRegua
+      ? (r.reguaPortfolioType || r.proposal?.reguaPortfolioType) === 'client'
+        ? 'Portfolio do Cliente (Meta Direta)'
+        : 'Portfolio Multilagos (Meta Inclusa)'
+      : 'N/A';
+
+    return [
+      `"${r.id}"`,
+      `"${r.contractMasterId}"`,
+      `"${r.signedAt}"`,
+      `"${r.companyName.replace(/"/g, '""')}"`,
+      `"${(r.tradeName || '').replace(/"/g, '""')}"`,
+      `"${r.cnpj}"`,
+      `"${r.stateRegistration || ''}"`,
+      `"${r.contactName.replace(/"/g, '""')}"`,
+      `"${r.cpf}"`,
+      `"${r.email}"`,
+      `"${r.phone}"`,
+      `"${(r.role || '').replace(/"/g, '""')}"`,
+      `"${(r.address || '').replace(/"/g, '""')}"`,
+      `"${r.planId}"`,
+      `"${r.serviceTrack}"`,
+      `"${portfolioLabel}"`,
+      `"${r.contractDurationText}"`,
+      `"${mode === 'installments' ? `Parcelado (${instCount}x)` : 'A Vista'}"`,
+      `"${cashVal.toFixed(2).replace('.', ',')}"`,
+      `"${instTotal.toFixed(2).replace('.', ',')}"`,
+      `"${mode === 'installments' ? instCount : 1}"`,
+      `"${(mode === 'installments' ? instVal : cashVal).toFixed(2).replace('.', ',')}"`,
+      `"${r.setupTotal.toFixed(2).replace('.', ',')}"`,
+      `"Dia ${String(dueDay).padStart(2, '0')}"`,
+      `"${r.monthlyTotal.toFixed(2).replace('.', ',')}"`,
+      `"${hasPrompt ? `${formatCleanPercent(pct)}%` : '0%'}"`,
+      `"${promptVal.toFixed(2).replace('.', ',')}"`,
+      `"${r.verificationHash}"`,
+      `"${r.signerIp}"`,
+      `"${r.signatureType === 'draw' ? 'Desenho na Tela' : 'Digitada'}"`,
+      `"${r.syncedToGoogle ? 'Sim' : 'Pendente'}"`,
+    ];
+  });
 
   const csvContent = [headers.join(';'), ...rows.map((row) => row.join(';'))].join('\r\n');
   // UTF-8 BOM so Excel opens accents cleanly

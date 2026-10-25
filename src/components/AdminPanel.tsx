@@ -1,6 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import JSZip from 'jszip';
-import { Plan, AsaasConfig, DiagnosticSheetData, BillingModel, ClientPricingTier, CommercialProposal, ClientInfo, DigitalSignatureData } from '../types';
+import {
+  Plan,
+  AsaasConfig,
+  DiagnosticSheetData,
+  BillingModel,
+  ClientPricingTier,
+  CommercialProposal,
+  ClientInfo,
+  DigitalSignatureData,
+  ReguaPortfolioType,
+  SetupPaymentMode,
+} from '../types';
 import { DEFAULT_CLIENT_PRICING_TIERS, MULTILAGOS_INFO } from '../data/mockData';
 import { 
   Save, 
@@ -43,7 +54,15 @@ import {
   Clock
 } from 'lucide-react';
 import { MultilagosLogo } from './MultilagosLogo';
-import { formatBRL } from '../utils/calculator';
+import {
+  formatBRL,
+  formatCleanPercent,
+  getDefaultPromptDiscountPercent,
+  getEffectivePromptDiscountPercent,
+  calculateMonthlyWithPromptDiscount,
+  getSetupBillingDetails,
+  getReguaPlanPrices,
+} from '../utils/calculator';
 import {
   SavedContractRecord,
   getContractHistory,
@@ -133,6 +152,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [contractForo, setContractForo] = useState<string>(() => {
     return localStorage.getItem('multilagos_contract_foro') || 'Comarca de Belo Horizonte/MG';
   });
+  const [defaultPromptDiscountPct, setDefaultPromptDiscountPct] = useState<number>(() =>
+    getDefaultPromptDiscountPercent()
+  );
+  const [docPreviewSetupMode, setDocPreviewSetupMode] = useState<SetupPaymentMode>('cash');
+  const [docPreviewInstallments, setDocPreviewInstallments] = useState<number>(3);
+  const [docPreviewReguaPortfolio, setDocPreviewReguaPortfolio] = useState<ReguaPortfolioType>('multilagos');
   
   // Local editable copies
   const [editPlans, setEditPlans] = useState<Plan[]>(plans);
@@ -235,13 +260,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const handleCopyRecordSummary = (record: SavedContractRecord) => {
-    const summary = `*CONTRATO ACEITO - MULTILAGOS*\n` +
+    const fin = record.proposal?.financials;
+    const setupDet = fin ? getSetupBillingDetails(fin) : null;
+    const mode = record.setupPaymentMode || setupDet?.mode || 'cash';
+    const cashVal = record.setupCashPrice ?? setupDet?.cashPrice ?? record.setupTotal;
+    const instTotal = record.setupInstallmentTotal ?? setupDet?.installmentTotal ?? record.setupTotal;
+    const instCount = record.setupInstallmentsCount ?? setupDet?.installmentsCount ?? 1;
+    const instVal = record.setupInstallmentValue ?? setupDet?.installmentValue ?? record.setupTotal;
+    const dueDay = record.dueDay ?? fin?.dueDay ?? 10;
+    const pct = record.promptPaymentDiscountPercent ?? (fin ? getEffectivePromptDiscountPercent(fin) : 5);
+    const hasPrompt = record.hasPromptPaymentDiscount ?? (fin ? fin.hasPromptPaymentDiscount !== false && pct > 0 : true);
+    const promptVal =
+      record.monthlyWithPromptDiscount ??
+      calculateMonthlyWithPromptDiscount(record.monthlyTotal, hasPrompt, pct);
+    const hasRegua =
+      record.serviceTrack === 'esteira-regua-n8n' ||
+      record.proposal?.selectedServices?.some((s) => s.category === 'regua-n8n');
+    const portLine = hasRegua
+      ? `Portfólio Régua WhatsApp: ${(record.reguaPortfolioType || record.proposal?.reguaPortfolioType) === 'client' ? 'Portfólio do Cliente (Meta Direta)' : 'Meu Portfólio Multilagos (Meta Inclusa)'}\n`
+      : '';
+
+    const summary =
+      `*CONTRATO ACEITO - DADOS P/ SUBIR COBRANÇA ASAAS*\n` +
       `Empresa: ${record.companyName}\n` +
       `CNPJ: ${record.cnpj}\n` +
       `Representante: ${record.contactName} (${record.cpf})\n` +
       `Email: ${record.email} | WhatsApp: ${record.phone}\n` +
       `Plano: ${record.planId} (${record.serviceTrack})\n` +
-      `Setup: R$ ${record.setupTotal.toFixed(2)} | Mensalidade: R$ ${record.monthlyTotal.toFixed(2)}\n` +
+      portLine +
+      `Setup Contratado: ${mode === 'installments' ? `PARCELADO em ${instCount}x de ${formatBRL(instVal)} (Total: ${formatBRL(instTotal)})` : `À VISTA por ${formatBRL(cashVal)}`}\n` +
+      `Ref. Setup: À Vista ${formatBRL(cashVal)} | Parcelado ${instCount}x de ${formatBRL(instVal)} (${formatBRL(instTotal)})\n` +
+      `Mensalidade: ${formatBRL(record.monthlyTotal)} (Vencimento dia ${String(dueDay).padStart(2, '0')})\n` +
+      `Desconto até Dia 05: ${hasPrompt ? `${formatCleanPercent(pct)}% -> ${formatBRL(promptVal)}/mês` : 'Sem desconto programado'}\n` +
       `Hash Assinatura: ${record.verificationHash}\n` +
       `Data/Hora: ${record.signedAt}\n` +
       `ID Proposta: ${record.id} | Contrato Mestre: ${record.contractMasterId}`;
@@ -509,6 +559,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         .map((s) => s.name)
         .join(' + ') || (record.serviceTrack === 'esteira-asaas' ? 'Implantação Asaas' : 'Multicobrança WhatsApp');
 
+      const recFin = record.proposal.financials;
+      const recSetup = recFin ? getSetupBillingDetails(recFin) : null;
+      const recMode = record.setupPaymentMode || recSetup?.mode || 'cash';
+      const recCash = record.setupCashPrice ?? recSetup?.cashPrice ?? record.setupTotal;
+      const recInstTotal = record.setupInstallmentTotal ?? recSetup?.installmentTotal ?? record.setupTotal;
+      const recInstCount = record.setupInstallmentsCount ?? recSetup?.installmentsCount ?? 1;
+      const recInstVal = record.setupInstallmentValue ?? recSetup?.installmentValue ?? record.setupTotal;
+      const recDue = record.dueDay ?? recFin?.dueDay ?? 10;
+      const recPct = record.promptPaymentDiscountPercent ?? (recFin ? getEffectivePromptDiscountPercent(recFin) : 5);
+      const recHasPrompt = record.hasPromptPaymentDiscount ?? (recFin ? recFin.hasPromptPaymentDiscount !== false && recPct > 0 : true);
+      const recPromptVal =
+        record.monthlyWithPromptDiscount ??
+        calculateMonthlyWithPromptDiscount(record.monthlyTotal, recHasPrompt, recPct);
+      const recHasRegua =
+        record.serviceTrack === 'esteira-regua-n8n' ||
+        record.proposal.selectedServices?.some((s) => s.category === 'regua-n8n');
+
       const sheetRecord: ProposalSheetRecord = {
         proposalId: record.id,
         contractMasterId: record.contractMasterId,
@@ -523,8 +590,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         phone: record.phone,
         cityState: record.proposal.clientInfo?.cityState || '',
         servicesSummary,
+        reguaPortfolioLabel: recHasRegua
+          ? (record.reguaPortfolioType || record.proposal.reguaPortfolioType) === 'client'
+            ? 'Portfólio do Cliente (Meta Direta)'
+            : 'Portfólio Multilagos (Meta Inclusa)'
+          : 'N/A',
+        setupPaymentMode: recMode,
+        setupCashPrice: recCash,
+        setupInstallmentTotal: recInstTotal,
+        setupInstallmentsCount: recInstCount,
+        setupInstallmentValue: recInstVal,
+        setupConditionSummary:
+          record.setupConditionSummary ||
+          (recMode === 'installments' ? `Parcelado em ${recInstCount}x de ${formatBRL(recInstVal)}` : `À vista: ${formatBRL(recCash)}`),
         setupTotal: record.setupTotal,
         monthlyTotal: record.monthlyTotal,
+        dueDay: recDue,
+        promptPaymentDiscountPercent: recHasPrompt ? recPct : 0,
+        monthlyWithPromptDiscount: recPromptVal,
         asaasStatus: record.proposal.asaasBilling ? 'Ativado' : 'Registrado',
         asaasPaymentId: record.proposal.asaasBilling?.paymentId,
         verificationHash: record.verificationHash,
@@ -792,6 +875,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleSaveAll = () => {
     localStorage.setItem('multilagos_contract_version', contractVersion);
     localStorage.setItem('multilagos_contract_foro', contractForo);
+    localStorage.setItem('multilagos_default_prompt_discount_pct', String(defaultPromptDiscountPct));
     onSavePlans(editPlans);
     onSavePricingTiers(editTiers);
     onSaveAsaasConfig(editAsaas);
@@ -813,12 +897,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     phone: '(22) 99902-0466',
   };
 
+  const sampleAsaasPlan = editPlans.find((p) => p.id === 'pro') || editPlans[0];
+  const sampleReguaPlan = editPlans.find((p) => p.id === 'regua-3k') || editPlans[editPlans.length - 1];
+  const sampleReguaPrices = getReguaPlanPrices(sampleReguaPlan, docPreviewReguaPortfolio);
+
+  const sampleHasPrompt = defaultPromptDiscountPct > 0;
+  const sampleMonthlyPrompt = calculateMonthlyWithPromptDiscount(249, sampleHasPrompt, defaultPromptDiscountPct);
+
   const sampleProposal: CommercialProposal = {
     id: 'PROP-2026-001',
     contractMasterId: 'MSA-2026-001',
     clientInfo: sampleClient,
     serviceTrack: 'esteira-asaas',
     planId: 'pro',
+    reguaPortfolioType: docPreviewReguaPortfolio,
     consultantName: MULTILAGOS_INFO.representativeName,
     consultantEmail: MULTILAGOS_INFO.email,
     consultantPhone: MULTILAGOS_INFO.phone,
@@ -828,12 +920,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setupDiscountApplied: false,
       setupDiscountValue: 0,
       setupTotal: 1500,
+      setupPaymentMode: docPreviewSetupMode,
+      setupCashPrice: 1500,
+      setupInstallmentTotal: 1500,
+      setupInstallmentsCount: docPreviewInstallments,
+      allowClientChooseSetupMode: true,
       monthlyPrice: 249,
       monthlyDiscountApplied: false,
       monthlyDiscountValue: 0,
       monthlyTotal: 249,
-      hasPromptPaymentDiscount: false,
-      monthlyWithPromptDiscount: 249,
+      hasPromptPaymentDiscount: sampleHasPrompt,
+      promptPaymentDiscountPercent: defaultPromptDiscountPct,
+      monthlyWithPromptDiscount: sampleMonthlyPrompt,
       dueDay: 10,
     },
     selectedServices: [
@@ -862,9 +960,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       verificationHash: 'ML-MSA-2026-OFICIAL-A8F932',
     },
   };
-
-  const sampleAsaasPlan = editPlans.find((p) => p.id === 'pro') || editPlans[0];
-  const sampleReguaPlan = editPlans.find((p) => p.id === 'regua-3k') || editPlans[editPlans.length - 1];
 
   const teamSizes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 
@@ -1018,13 +1113,64 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         {/* TAB 1: Planos */}
         {activeTab === 'planos' && (
           <div className="space-y-6">
+            {/* Global Default Day-05 Prompt Discount Bar */}
+            <div className="bg-[#16242A] border border-emerald-800/70 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 block">
+                  Regra Comercial Global · Pontualidade
+                </span>
+                <h3 className="text-base font-bold text-white font-display">
+                  Percentual Padrão de Desconto para Pagamento até o Dia 05 (%)
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Define o percentual inicial carregado no Simulador e nos Modelos de Proposta (também pode ser ajustado individualmente em cada proposta).
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {[0, 3, 5, 7, 10].map((pctOpt) => (
+                  <button
+                    key={pctOpt}
+                    type="button"
+                    onClick={() => {
+                      setDefaultPromptDiscountPct(pctOpt);
+                      localStorage.setItem('multilagos_default_prompt_discount_pct', String(pctOpt));
+                    }}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold border transition-colors cursor-pointer ${
+                      defaultPromptDiscountPct === pctOpt
+                        ? 'bg-emerald-600 border-emerald-500 text-white'
+                        : 'bg-[#111F24] border-slate-700 text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    {pctOpt}%
+                  </button>
+                ))}
+                <div className="flex items-center gap-1 bg-[#111F24] border border-slate-700 rounded-lg px-2.5 py-1.5">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    value={defaultPromptDiscountPct}
+                    onChange={(e) => {
+                      const v = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+                      setDefaultPromptDiscountPct(v);
+                      localStorage.setItem('multilagos_default_prompt_discount_pct', String(v));
+                    }}
+                    className="w-12 bg-transparent text-right text-emerald-400 font-mono font-bold text-xs focus:outline-none"
+                  />
+                  <span className="text-slate-400 font-mono font-bold text-xs">%</span>
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {editPlans.map((plan, pIdx) => (
                 <div key={plan.id} className="bg-[#16242A] border border-slate-700/80 rounded-2xl p-6 space-y-4">
                   <div className="flex items-center justify-between pb-2 border-b border-slate-700">
                     <div>
                       <span className="text-[10px] font-bold uppercase tracking-wider text-[#D40B3A]">
-                        {plan.track === 'asaas' ? 'Esteira 1 · Asaas' : 'Esteira 2 · Multicobrança'}
+                        {plan.track === 'asaas' ? 'Esteira 1 · Asaas' : 'Esteira 2 · Régua Multicobrança WhatsApp'}
                       </span>
                       <h3 className="text-lg font-bold text-white font-display">
                         {plan.name}
@@ -1037,26 +1183,88 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 text-xs">
-                    <div>
-                      <label className="text-slate-400 block mb-1">Mensalidade Base (R$):</label>
-                      <input
-                        type="number"
-                        value={plan.baseMonthlyPrice}
-                        onChange={(e) => handleUpdatePlan(pIdx, 'baseMonthlyPrice', Number(e.target.value))}
-                        className="w-full px-3 py-2 bg-[#111F24] border border-slate-700 rounded-lg text-white font-mono font-bold"
-                      />
+                  {plan.track === 'regua-n8n' ? (
+                    <div className="space-y-3 text-xs">
+                      {/* Preço 1: Meu Portfólio Multilagos (Meta Inclusa) */}
+                      <div className="p-3 rounded-xl bg-[#111F24] border border-emerald-800/60 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-emerald-400 text-[11px]">
+                            1. Meu Portfólio (Multilagos · Custos Meta Inclusos)
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-slate-400 block mb-1 text-[11px]">Mensalidade (R$):</label>
+                            <input
+                              type="number"
+                              value={plan.baseMonthlyPrice}
+                              onChange={(e) => handleUpdatePlan(pIdx, 'baseMonthlyPrice', Number(e.target.value))}
+                              className="w-full px-3 py-1.5 bg-[#16242A] border border-slate-700 rounded-lg text-white font-mono font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-slate-400 block mb-1 text-[11px]">Setup (R$):</label>
+                            <input
+                              type="number"
+                              value={plan.baseSetupPrice}
+                              onChange={(e) => handleUpdatePlan(pIdx, 'baseSetupPrice', Number(e.target.value))}
+                              className="w-full px-3 py-1.5 bg-[#16242A] border border-slate-700 rounded-lg text-white font-mono font-bold"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Preço 2: Portfólio do Cliente (BM do Cliente · Meta Direta) */}
+                      <div className="p-3 rounded-xl bg-[#111F24] border border-amber-700/60 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-amber-300 text-[11px]">
+                            2. Portfólio do Cliente (BM Próprio · Tarifas Meta Diretas)
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-slate-400 block mb-1 text-[11px]">Mensalidade Cliente (R$):</label>
+                            <input
+                              type="number"
+                              value={plan.clientPortfolioMonthlyPrice ?? getReguaPlanPrices(plan, 'client').monthlyPrice}
+                              onChange={(e) => handleUpdatePlan(pIdx, 'clientPortfolioMonthlyPrice', Number(e.target.value))}
+                              className="w-full px-3 py-1.5 bg-[#16242A] border border-slate-700 rounded-lg text-amber-300 font-mono font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-slate-400 block mb-1 text-[11px]">Setup Cliente (R$):</label>
+                            <input
+                              type="number"
+                              value={plan.clientPortfolioSetupPrice ?? plan.baseSetupPrice}
+                              onChange={(e) => handleUpdatePlan(pIdx, 'clientPortfolioSetupPrice', Number(e.target.value))}
+                              className="w-full px-3 py-1.5 bg-[#16242A] border border-slate-700 rounded-lg text-white font-mono font-bold"
+                            />
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <label className="text-slate-400 block mb-1">Setup Base (R$):</label>
-                      <input
-                        type="number"
-                        value={plan.baseSetupPrice}
-                        onChange={(e) => handleUpdatePlan(pIdx, 'baseSetupPrice', Number(e.target.value))}
-                        className="w-full px-3 py-2 bg-[#111F24] border border-slate-700 rounded-lg text-white font-mono font-bold"
-                      />
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4 text-xs">
+                      <div>
+                        <label className="text-slate-400 block mb-1">Mensalidade Base (R$):</label>
+                        <input
+                          type="number"
+                          value={plan.baseMonthlyPrice}
+                          onChange={(e) => handleUpdatePlan(pIdx, 'baseMonthlyPrice', Number(e.target.value))}
+                          className="w-full px-3 py-2 bg-[#111F24] border border-slate-700 rounded-lg text-white font-mono font-bold"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1">Setup Base (R$):</label>
+                        <input
+                          type="number"
+                          value={plan.baseSetupPrice}
+                          onChange={(e) => handleUpdatePlan(pIdx, 'baseSetupPrice', Number(e.target.value))}
+                          className="w-full px-3 py-2 bg-[#111F24] border border-slate-700 rounded-lg text-white font-mono font-bold"
+                        />
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   <div className="text-xs">
                     <label className="text-slate-400 block mb-1">Headline do Plano:</label>
@@ -1547,29 +1755,86 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-slate-400 block mb-1">Representante da Contratada:</label>
-                  <input
-                    type="text"
-                    value={MULTILAGOS_INFO.representativeName}
-                    readOnly
-                    className="w-full px-3 py-2 bg-[#111F24]/60 border border-slate-800 rounded-lg text-slate-300 font-mono text-xs cursor-not-allowed"
-                  />
+                  <label className="text-slate-400 block mb-1">% Desconto até Dia 05 no Modelo:</label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.5"
+                      value={defaultPromptDiscountPct}
+                      onChange={(e) => {
+                        const v = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+                        setDefaultPromptDiscountPct(v);
+                        localStorage.setItem('multilagos_default_prompt_discount_pct', String(v));
+                      }}
+                      className="w-full px-3 py-2 bg-[#111F24] border border-slate-700 rounded-lg text-emerald-400 font-mono font-bold focus:ring-1 focus:ring-[#D40B3A]"
+                    />
+                    <span className="text-slate-400 font-mono font-bold">%</span>
+                  </div>
                 </div>
 
                 <div>
-                  <label className="text-slate-400 block mb-1">CNPJ da Contratada:</label>
-                  <input
-                    type="text"
-                    value={MULTILAGOS_INFO.cnpj}
-                    readOnly
-                    className="w-full px-3 py-2 bg-[#111F24]/60 border border-slate-800 rounded-lg text-slate-300 font-mono text-xs cursor-not-allowed"
-                  />
+                  <label className="text-slate-400 block mb-1">Modalidade Setup na Prévia:</label>
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={docPreviewSetupMode}
+                      onChange={(e) => setDocPreviewSetupMode(e.target.value as SetupPaymentMode)}
+                      className="flex-1 px-2.5 py-2 bg-[#111F24] border border-slate-700 rounded-lg text-white font-bold"
+                    >
+                      <option value="cash">À Vista</option>
+                      <option value="installments">Parcelado</option>
+                    </select>
+                    <select
+                      value={docPreviewInstallments}
+                      onChange={(e) => setDocPreviewInstallments(Number(e.target.value))}
+                      className="w-20 px-2 py-2 bg-[#111F24] border border-slate-700 rounded-lg text-white font-mono font-bold"
+                      title="Quantidade de parcelas no modelo"
+                    >
+                      {[2, 3, 4, 6, 10, 12].map((n) => (
+                        <option key={n} value={n}>{n}x</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 
+              {/* Portfólio da Régua na Prévia */}
+              {(activeDocSubTab === 'proposta-regua' || activeDocSubTab === 'proposta-integrada') && (
+                <div className="p-3 rounded-xl bg-[#111F24] border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                  <span className="text-slate-300 font-semibold">
+                    Portfólio da Régua WhatsApp exibido no Modelo de Proposta:
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDocPreviewReguaPortfolio('multilagos')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-colors cursor-pointer ${
+                        docPreviewReguaPortfolio === 'multilagos'
+                          ? 'bg-[#D40B3A] text-white'
+                          : 'bg-[#16242A] text-slate-300 border border-slate-700'
+                      }`}
+                    >
+                      Meu Portfólio (Multilagos · Meta Inclusa)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDocPreviewReguaPortfolio('client')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-colors cursor-pointer ${
+                        docPreviewReguaPortfolio === 'client'
+                          ? 'bg-[#D40B3A] text-white'
+                          : 'bg-[#16242A] text-slate-300 border border-slate-700'
+                      }`}
+                    >
+                      Portfólio do Cliente (Meta Direta)
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="pt-2 flex items-center justify-between">
                 <span className="text-[11px] text-slate-400">
-                  As 12 cláusulas do Contrato Mestre (MSA) e os entregáveis dos 4 planos Asaas foram atualizados para a nova versão oficial.
+                  As 12 cláusulas do Contrato Mestre (MSA), o parcelamento do Setup, o desconto até dia 05 e os dois portfólios da Régua estão sincronizados nos modelos.
                 </span>
                 <button
                   type="button"
@@ -1630,16 +1895,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           ...sampleProposal,
                           serviceTrack: 'esteira-regua-n8n',
                           planId: 'regua-3k',
+                          reguaPortfolioType: docPreviewReguaPortfolio,
                           financials: {
                             ...sampleProposal.financials,
-                            monthlyPrice: 299,
-                            monthlyTotal: 299,
-                            setupPrice: 950,
-                            setupTotal: 950,
+                            monthlyPrice: sampleReguaPrices.monthlyPrice,
+                            monthlyTotal: sampleReguaPrices.monthlyPrice,
+                            monthlyWithPromptDiscount: calculateMonthlyWithPromptDiscount(
+                              sampleReguaPrices.monthlyPrice,
+                              sampleHasPrompt,
+                              defaultPromptDiscountPct
+                            ),
+                            setupPrice: sampleReguaPrices.setupPrice,
+                            setupCashPrice: sampleReguaPrices.setupPrice,
+                            setupInstallmentTotal: sampleReguaPrices.setupPrice,
+                            setupTotal: sampleReguaPrices.setupPrice,
                           },
                         }}
                         clientInfo={sampleClient}
                         currentPlan={sampleReguaPlan}
+                        allPlans={editPlans}
                         signatureData={sampleProposal.signature}
                         isSigned={false}
                       />
@@ -1648,48 +1922,63 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
                   {activeDocSubTab === 'proposta-integrada' && (
                     <div className="w-full">
-                      <AsaasProposalDoc
-                        proposal={{
-                          ...sampleProposal,
-                          selectedServices: [
-                            {
-                              id: 'asaas',
-                              category: 'asaas',
-                              planId: 'pro',
-                              name: 'Implantação Asaas PRO',
-                              setupPrice: 1500,
-                              monthlyPrice: 249,
-                            },
-                            {
-                              id: 'regua',
-                              category: 'regua-n8n',
-                              planId: 'regua-3k',
-                              name: 'Régua de Cobrança WhatsApp (3.000 msgs/mês)',
-                              setupPrice: 950,
-                              monthlyPrice: 299,
-                            },
-                            {
-                              id: 'bpo',
-                              category: 'consultoria',
-                              planId: 'personalizado',
-                              name: 'Consultoria e BPO Financeiro',
-                              setupPrice: 1500,
-                              monthlyPrice: 950,
-                            },
-                          ],
-                          financials: {
-                            ...sampleProposal.financials,
-                            monthlyPrice: 1498,
-                            monthlyTotal: 1498,
-                            setupPrice: 3950,
-                            setupTotal: 3950,
-                          },
-                        }}
-                        clientInfo={sampleClient}
-                        currentPlan={sampleAsaasPlan}
-                        signatureData={sampleProposal.signature}
-                        isSigned={false}
-                      />
+                      {(() => {
+                        const comboMonthly = 249 + sampleReguaPrices.monthlyPrice + 950;
+                        const comboSetup = 1500 + sampleReguaPrices.setupPrice + 1500;
+                        return (
+                          <AsaasProposalDoc
+                            proposal={{
+                              ...sampleProposal,
+                              reguaPortfolioType: docPreviewReguaPortfolio,
+                              selectedServices: [
+                                {
+                                  id: 'asaas',
+                                  category: 'asaas',
+                                  planId: 'pro',
+                                  name: 'Implantação Asaas PRO',
+                                  setupPrice: 1500,
+                                  monthlyPrice: 249,
+                                },
+                                {
+                                  id: 'regua',
+                                  category: 'regua-n8n',
+                                  planId: 'regua-3k',
+                                  reguaPortfolioType: docPreviewReguaPortfolio,
+                                  name: `Régua de Cobrança WhatsApp (3.000 msgs/mês · ${docPreviewReguaPortfolio === 'client' ? 'Portfólio Cliente' : 'Portfólio Multilagos'})`,
+                                  setupPrice: sampleReguaPrices.setupPrice,
+                                  monthlyPrice: sampleReguaPrices.monthlyPrice,
+                                },
+                                {
+                                  id: 'bpo',
+                                  category: 'consultoria',
+                                  planId: 'personalizado',
+                                  name: 'Consultoria e BPO Financeiro',
+                                  setupPrice: 1500,
+                                  monthlyPrice: 950,
+                                },
+                              ],
+                              financials: {
+                                ...sampleProposal.financials,
+                                monthlyPrice: comboMonthly,
+                                monthlyTotal: comboMonthly,
+                                monthlyWithPromptDiscount: calculateMonthlyWithPromptDiscount(
+                                  comboMonthly,
+                                  sampleHasPrompt,
+                                  defaultPromptDiscountPct
+                                ),
+                                setupPrice: comboSetup,
+                                setupCashPrice: comboSetup,
+                                setupInstallmentTotal: comboSetup,
+                                setupTotal: comboSetup,
+                              },
+                            }}
+                            clientInfo={sampleClient}
+                            currentPlan={sampleAsaasPlan}
+                            signatureData={sampleProposal.signature}
+                            isSigned={false}
+                          />
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
@@ -3036,37 +3325,115 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             </div>
                           </div>
 
-                          <div className="text-right sm:shrink-0">
-                            <div className="text-xs text-slate-400">Investimento Contratado</div>
-                            <div className="text-sm font-bold text-white font-mono">
-                              Setup: <span className="text-emerald-400">{formatBRL(record.setupTotal)}</span> · Mensal: <span className="text-blue-400">{formatBRL(record.monthlyTotal)}</span>
-                            </div>
-                          </div>
+                          {(() => {
+                            const rFin = record.proposal?.financials;
+                            const rSetup = rFin ? getSetupBillingDetails(rFin) : null;
+                            const rMode = record.setupPaymentMode || rSetup?.mode || 'cash';
+                            const rCash = record.setupCashPrice ?? rSetup?.cashPrice ?? record.setupTotal;
+                            const rInstTotal = record.setupInstallmentTotal ?? rSetup?.installmentTotal ?? record.setupTotal;
+                            const rInstCount = record.setupInstallmentsCount ?? rSetup?.installmentsCount ?? 1;
+                            const rInstVal = record.setupInstallmentValue ?? rSetup?.installmentValue ?? record.setupTotal;
+                            const rDue = record.dueDay ?? rFin?.dueDay ?? 10;
+                            const rPct = record.promptPaymentDiscountPercent ?? (rFin ? getEffectivePromptDiscountPercent(rFin) : 5);
+                            const rHasPrompt = record.hasPromptPaymentDiscount ?? (rFin ? rFin.hasPromptPaymentDiscount !== false && rPct > 0 : true);
+                            const rPromptVal =
+                              record.monthlyWithPromptDiscount ??
+                              calculateMonthlyWithPromptDiscount(record.monthlyTotal, rHasPrompt, rPct);
+
+                            return (
+                              <div className="text-right sm:shrink-0">
+                                <div className="text-[11px] text-slate-400">
+                                  Investimento Contratado ({rMode === 'installments' ? `Setup ${rInstCount}x` : 'Setup À Vista'})
+                                </div>
+                                <div className="text-sm font-bold text-white font-mono">
+                                  Setup:{' '}
+                                  <span className="text-emerald-400">
+                                    {rMode === 'installments' ? `${rInstCount}x ${formatBRL(rInstVal)}` : formatBRL(rCash)}
+                                  </span>{' '}
+                                  · Mensal: <span className="text-blue-400">{formatBRL(record.monthlyTotal)}</span>
+                                </div>
+                                {rHasPrompt && (
+                                  <div className="text-[10.5px] font-mono text-emerald-400/90">
+                                    Até dia 05 (-{formatCleanPercent(rPct)}%): {formatBRL(rPromptVal)} · Venc. dia {String(rDue).padStart(2, '0')}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
 
-                        {/* Middle info grid */}
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-300">
-                          <div className="p-3 bg-[#16242A] rounded-xl border border-slate-800/80 space-y-1">
-                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Contato & Endereço</span>
-                            <div className="truncate font-semibold">{record.email}</div>
-                            <div className="text-slate-400 truncate">{record.phone}</div>
-                            <div className="text-[11px] text-slate-400 truncate" title={record.address}>{record.address || 'Endereço não informado'}</div>
-                          </div>
+                        {/* Middle info grid + Asaas Billing Upload Box */}
+                        {(() => {
+                          const rFin = record.proposal?.financials;
+                          const rSetup = rFin ? getSetupBillingDetails(rFin) : null;
+                          const rMode = record.setupPaymentMode || rSetup?.mode || 'cash';
+                          const rCash = record.setupCashPrice ?? rSetup?.cashPrice ?? record.setupTotal;
+                          const rInstTotal = record.setupInstallmentTotal ?? rSetup?.installmentTotal ?? record.setupTotal;
+                          const rInstCount = record.setupInstallmentsCount ?? rSetup?.installmentsCount ?? 1;
+                          const rInstVal = record.setupInstallmentValue ?? rSetup?.installmentValue ?? record.setupTotal;
+                          const rDue = record.dueDay ?? rFin?.dueDay ?? 10;
+                          const rPct = record.promptPaymentDiscountPercent ?? (rFin ? getEffectivePromptDiscountPercent(rFin) : 5);
+                          const rHasPrompt = record.hasPromptPaymentDiscount ?? (rFin ? rFin.hasPromptPaymentDiscount !== false && rPct > 0 : true);
+                          const rPromptVal =
+                            record.monthlyWithPromptDiscount ??
+                            calculateMonthlyWithPromptDiscount(record.monthlyTotal, rHasPrompt, rPct);
+                          const rHasRegua =
+                            record.serviceTrack === 'esteira-regua-n8n' ||
+                            record.proposal?.selectedServices?.some((s) => s.category === 'regua-n8n');
 
-                          <div className="p-3 bg-[#16242A] rounded-xl border border-slate-800/80 space-y-1">
-                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Plano & Serviços</span>
-                            <div className="font-semibold text-white uppercase">{record.planId} · {record.serviceTrack}</div>
-                            <div className="text-slate-400 text-[11px]">{record.contractDurationText}</div>
-                          </div>
+                          return (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs text-slate-300">
+                              <div className="p-3 bg-[#16242A] rounded-xl border border-slate-800/80 space-y-1">
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block">Contato & Endereço</span>
+                                <div className="truncate font-semibold">{record.email}</div>
+                                <div className="text-slate-400 truncate">{record.phone}</div>
+                                <div className="text-[11px] text-slate-400 truncate" title={record.address}>{record.address || 'Endereço não informado'}</div>
+                              </div>
 
-                          <div className="p-3 bg-[#16242A] rounded-xl border border-slate-800/80 space-y-1">
-                            <span className="text-[10px] uppercase font-bold text-slate-400 block">Certificado Eletrônico</span>
-                            <div className="font-mono text-emerald-400 text-[11px] truncate" title={record.verificationHash}>
-                              {record.verificationHash}
+                              <div className="p-3 bg-[#16242A] rounded-xl border border-slate-800/80 space-y-1">
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block">Plano & Portfólio</span>
+                                <div className="font-semibold text-white uppercase">{record.planId} · {record.serviceTrack}</div>
+                                {rHasRegua ? (
+                                  <div className="text-[11px] text-amber-300 font-semibold">
+                                    {(record.reguaPortfolioType || record.proposal?.reguaPortfolioType) === 'client'
+                                      ? 'Régua: Portfólio do Cliente'
+                                      : 'Régua: Meu Portfólio Multilagos'}
+                                  </div>
+                                ) : (
+                                  <div className="text-slate-400 text-[11px]">{record.contractDurationText}</div>
+                                )}
+                              </div>
+
+                              <div className="p-3 bg-[#16242A] rounded-xl border border-emerald-800/70 space-y-1">
+                                <span className="text-[10px] uppercase font-bold text-emerald-400 block">
+                                  Dados p/ Subir Setup Asaas
+                                </span>
+                                <div className="font-mono font-bold text-white text-[11.5px]">
+                                  {rMode === 'installments'
+                                    ? `Parcelado: ${rInstCount}x de ${formatBRL(rInstVal)}`
+                                    : `À Vista: ${formatBRL(rCash)}`}
+                                </div>
+                                <div className="text-[10.5px] font-mono text-slate-400">
+                                  À vista: {formatBRL(rCash)} | Parc.: {formatBRL(rInstTotal)} ({rInstCount}x)
+                                </div>
+                              </div>
+
+                              <div className="p-3 bg-[#16242A] rounded-xl border border-blue-800/70 space-y-1">
+                                <span className="text-[10px] uppercase font-bold text-blue-400 block">
+                                  Dados p/ Subir Mensalidade
+                                </span>
+                                <div className="font-mono font-bold text-white text-[11.5px]">
+                                  {formatBRL(record.monthlyTotal)} · Dia {String(rDue).padStart(2, '0')}
+                                </div>
+                                <div className="text-[10.5px] font-mono text-emerald-400">
+                                  {rHasPrompt
+                                    ? `Desc. dia 05 (${formatCleanPercent(rPct)}%): ${formatBRL(rPromptVal)}`
+                                    : 'Sem desc. dia 05'}
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-slate-400 text-[10px] truncate">{record.signerIp}</div>
-                          </div>
-                        </div>
+                          );
+                        })()}
 
                         {/* Action buttons bar */}
                         <div className="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800">
@@ -3208,6 +3575,66 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         <span className="text-white font-medium">{selectedRecordForModal.address || 'Não especificado'}</span>
                       </div>
                     </div>
+
+                    {/* Billing Upload Details inside Modal */}
+                    {(() => {
+                      const mFin = selectedRecordForModal.proposal?.financials;
+                      const mSetup = mFin ? getSetupBillingDetails(mFin) : null;
+                      const mMode = selectedRecordForModal.setupPaymentMode || mSetup?.mode || 'cash';
+                      const mCash = selectedRecordForModal.setupCashPrice ?? mSetup?.cashPrice ?? selectedRecordForModal.setupTotal;
+                      const mInstTotal = selectedRecordForModal.setupInstallmentTotal ?? mSetup?.installmentTotal ?? selectedRecordForModal.setupTotal;
+                      const mInstCount = selectedRecordForModal.setupInstallmentsCount ?? mSetup?.installmentsCount ?? 1;
+                      const mInstVal = selectedRecordForModal.setupInstallmentValue ?? mSetup?.installmentValue ?? selectedRecordForModal.setupTotal;
+                      const mDue = selectedRecordForModal.dueDay ?? mFin?.dueDay ?? 10;
+                      const mPct = selectedRecordForModal.promptPaymentDiscountPercent ?? (mFin ? getEffectivePromptDiscountPercent(mFin) : 5);
+                      const mHasPrompt = selectedRecordForModal.hasPromptPaymentDiscount ?? (mFin ? mFin.hasPromptPaymentDiscount !== false && mPct > 0 : true);
+                      const mPromptVal =
+                        selectedRecordForModal.monthlyWithPromptDiscount ??
+                        calculateMonthlyWithPromptDiscount(selectedRecordForModal.monthlyTotal, mHasPrompt, mPct);
+
+                      return (
+                        <div className="p-4 bg-[#111F24] rounded-xl border border-emerald-800/70 space-y-2">
+                          <span className="text-[10px] uppercase font-bold text-emerald-400 block">
+                             Parâmetros Financeiros p/ Subir Cobrança no Asaas
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-slate-300 font-mono text-[11.5px]">
+                            <div>
+                              Modalidade Setup:{' '}
+                              <strong className="text-emerald-400">
+                                {mMode === 'installments' ? `PARCELADO (${mInstCount}x)` : 'À VISTA'}
+                              </strong>
+                            </div>
+                            <div>
+                              Valor da Cobrança Setup:{' '}
+                              <strong className="text-white">
+                                {mMode === 'installments' ? `${mInstCount}x de ${formatBRL(mInstVal)}` : formatBRL(mCash)}
+                              </strong>
+                            </div>
+                            <div>
+                              Preço Setup À Vista: <strong className="text-white">{formatBRL(mCash)}</strong>
+                            </div>
+                            <div>
+                              Preço Setup Parcelado:{' '}
+                              <strong className="text-white">
+                                {formatBRL(mInstTotal)} ({mInstCount}x de {formatBRL(mInstVal)})
+                              </strong>
+                            </div>
+                            <div>
+                              Mensalidade Recorrente:{' '}
+                              <strong className="text-blue-400">
+                                {formatBRL(selectedRecordForModal.monthlyTotal)} (Venc. dia {String(mDue).padStart(2, '0')})
+                              </strong>
+                            </div>
+                            <div>
+                              Desconto até Dia 05:{' '}
+                              <strong className="text-emerald-400">
+                                {mHasPrompt ? `${formatCleanPercent(mPct)}% (${formatBRL(mPromptVal)})` : 'Não aplicado'}
+                              </strong>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Signature details */}
                     <div className="p-4 bg-[#111F24] rounded-xl border border-slate-800 space-y-2">

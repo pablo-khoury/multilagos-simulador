@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   CommercialProposal, 
+  ProposalFinancials,
+  SetupPaymentMode,
   ClientInfo, 
   DigitalSignatureData, 
   AsaasBillingResult, 
@@ -9,7 +11,13 @@ import {
   ContractServiceItem
 } from '../types';
 import { MULTILAGOS_INFO, ALL_INITIAL_PLANS } from '../data/mockData';
-import { formatBRL } from '../utils/calculator';
+import {
+  formatBRL,
+  formatCleanPercent,
+  getSetupBillingDetails,
+  getEffectivePromptDiscountPercent,
+  calculateMonthlyWithPromptDiscount,
+} from '../utils/calculator';
 import { processAsaasContractBilling } from '../utils/asaasService';
 import { exportElementToPdf } from '../utils/pdfGenerator';
 import { MultilagosLogo } from './MultilagosLogo';
@@ -46,7 +54,8 @@ import {
   RefreshCw,
   Package,
   Clock,
-  Calendar
+  Calendar,
+  AlertCircle
 } from 'lucide-react';
 
 interface ClientAcceptanceViewProps {
@@ -54,6 +63,7 @@ interface ClientAcceptanceViewProps {
   asaasConfig: AsaasConfig;
   customPlans?: Plan[];
   isClientDirectAccess?: boolean;
+  onUpdateFinancials?: (fin: ProposalFinancials) => void;
   onProposalSigned: (updatedProposal: CommercialProposal) => void;
   onBackToConsultantView?: () => void;
 }
@@ -63,6 +73,7 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
   asaasConfig,
   customPlans = ALL_INITIAL_PLANS,
   isClientDirectAccess = false,
+  onUpdateFinancials,
   onProposalSigned,
   onBackToConsultantView,
 }) => {
@@ -99,10 +110,11 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
     proposal.asaasBilling || null
   );
 
-  // PDF download progress states
+  // PDF download progress & validation states
   const [downloadingPropPdf, setDownloadingPropPdf] = useState(false);
   const [downloadingContractPdf, setDownloadingContractPdf] = useState(false);
   const [downloadNotice, setDownloadNotice] = useState<string>('');
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   // Blobs of generated signed PDFs stored for Google Drive upload
   const proposalBlobRef = useRef<Blob | null>(null);
@@ -117,6 +129,27 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
   const isSigningRef = useRef(false);
 
   const fin = proposal.financials;
+  const setupDetails = getSetupBillingDetails(fin);
+  const promptPct = getEffectivePromptDiscountPercent(fin);
+  const hasPrompt = fin.hasPromptPaymentDiscount !== false && promptPct > 0;
+  const monthlyPromptVal =
+    typeof fin.monthlyWithPromptDiscount === 'number' && hasPrompt
+      ? fin.monthlyWithPromptDiscount
+      : calculateMonthlyWithPromptDiscount(fin.monthlyTotal, hasPrompt, promptPct);
+
+  const handleSelectClientSetupMode = (mode: SetupPaymentMode) => {
+    if (isSigned || !onUpdateFinancials) return;
+    const nextTotal = mode === 'installments' ? setupDetails.installmentTotal : setupDetails.cashPrice;
+    onUpdateFinancials({
+      ...fin,
+      setupPaymentMode: mode,
+      setupCashPrice: setupDetails.cashPrice,
+      setupInstallmentTotal: setupDetails.installmentTotal,
+      setupInstallmentsCount: setupDetails.installmentsCount,
+      setupTotal: nextTotal,
+    });
+  };
+
   const currentPlan = customPlans.find((p) => p.id === proposal.planId) || customPlans[0];
 
   const proposalElementId = proposal.serviceTrack === 'esteira-asaas' 
@@ -187,6 +220,17 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
       .map((s) => s.name)
       .join(' + ') || (currentProposal.serviceTrack === 'esteira-asaas' ? 'Implantação Asaas' : 'Multicobrança WhatsApp');
 
+    const curFin = currentProposal.financials;
+    const curSetup = getSetupBillingDetails(curFin);
+    const curPct = getEffectivePromptDiscountPercent(curFin);
+    const curHasPrompt = curFin.hasPromptPaymentDiscount !== false && curPct > 0;
+    const hasReguaServ =
+      currentProposal.serviceTrack === 'esteira-regua-n8n' ||
+      currentProposal.selectedServices?.some((s) => s.category === 'regua-n8n');
+    const reguaPort =
+      currentProposal.selectedServices?.find((s) => s.category === 'regua-n8n')?.reguaPortfolioType ||
+      currentProposal.reguaPortfolioType;
+
     const baseRecord: ProposalSheetRecord = {
       proposalId: currentProposal.id,
       contractMasterId: currentProposal.contractMasterId,
@@ -201,8 +245,24 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
       phone: clientInfo.phone,
       cityState: clientInfo.cityState,
       servicesSummary,
-      setupTotal: fin.setupTotal,
-      monthlyTotal: fin.monthlyTotal,
+      reguaPortfolioLabel: hasReguaServ
+        ? reguaPort === 'client'
+          ? 'Portfólio do Cliente (Meta Direta)'
+          : 'Portfólio Multilagos (Meta Inclusa)'
+        : 'N/A',
+      setupPaymentMode: curSetup.mode,
+      setupCashPrice: curSetup.cashPrice,
+      setupInstallmentTotal: curSetup.installmentTotal,
+      setupInstallmentsCount: curSetup.installmentsCount,
+      setupInstallmentValue: curSetup.installmentValue,
+      setupConditionSummary: curSetup.shortSummary,
+      setupTotal: curSetup.contractedTotal,
+      monthlyTotal: curFin.monthlyTotal,
+      dueDay: curFin.dueDay || 10,
+      promptPaymentDiscountPercent: curHasPrompt ? curPct : 0,
+      monthlyWithPromptDiscount: curHasPrompt
+        ? calculateMonthlyWithPromptDiscount(curFin.monthlyTotal, true, curPct)
+        : curFin.monthlyTotal,
       asaasStatus: billing ? 'Ativado' : 'Aguardando',
       asaasPaymentId: billing?.paymentId,
       verificationHash: sig.verificationHash,
@@ -304,23 +364,25 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
       return;
     }
 
+    setValidationError(null);
+
     if (!clientInfo.companyName.trim() || !clientInfo.cnpj.trim()) {
-      alert('Por favor, preencha a Razão Social e o CNPJ da empresa.');
+      setValidationError('Por favor, preencha a Razão Social e o CNPJ da empresa.');
       return;
     }
 
     if (!clientInfo.contactName.trim() || !clientInfo.cpf.trim() || !clientInfo.email.trim()) {
-      alert('Por favor, informe o Nome, CPF e E-mail do representante legal.');
+      setValidationError('Por favor, informe o Nome, CPF e E-mail do representante legal.');
       return;
     }
 
     if (!termsAgreed) {
-      alert('Por favor, assinale a concordância com o Contrato Mestre e a Proposta Comercial.');
+      setValidationError('Por favor, assinale a concordância com o Contrato Mestre e a Proposta Comercial.');
       return;
     }
 
     if (signatureType === 'draw' && !hasDrawn) {
-      alert('Por favor, desenhe sua assinatura no quadro indicado ou alterne para a assinatura digitada.');
+      setValidationError('Por favor, desenhe sua assinatura no quadro indicado ou alterne para a assinatura digitada.');
       return;
     }
 
@@ -422,7 +484,7 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
 
     } catch (err) {
       console.error('Erro ao processar aceite:', err);
-      alert('Ocorreu um erro no processamento do aceite. Tente novamente.');
+      setValidationError('Ocorreu um erro no processamento do aceite. Tente novamente.');
       isSigningRef.current = false;
     } finally {
       setIsProcessing(false);
@@ -537,32 +599,85 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-            <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800">
-              <span className="text-slate-400 block">Mensalidade Total Contratada:</span>
-              <p className="text-2xl font-extrabold text-[#D40B3A] font-mono tabular-nums mt-1">
-                {formatBRL(fin.monthlyTotal)}
-                <span className="text-xs font-normal text-slate-400">/mês</span>
-              </p>
-              <p className="text-[11px] text-emerald-400 mt-1">
-                Com pontualidade: {formatBRL(fin.monthlyWithPromptDiscount)} até o dia 05
-              </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+            <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Mensalidade Total Contratada:</span>
+                  <span className="text-[10px] font-mono text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                    Venc. dia {String(fin.dueDay || 10).padStart(2, '0')}
+                  </span>
+                </div>
+                <p className="text-2xl font-extrabold text-[#D40B3A] font-mono tabular-nums mt-1">
+                  {formatBRL(fin.monthlyTotal)}
+                  <span className="text-xs font-normal text-slate-400">/mês</span>
+                </p>
+              </div>
+              {hasPrompt ? (
+                <p className="text-[11px] text-emerald-400 mt-2 font-semibold">
+                  ✓ Até o dia 05 ({formatCleanPercent(promptPct)}% desc.): <strong>{formatBRL(monthlyPromptVal)}/mês</strong>
+                </p>
+              ) : (
+                <p className="text-[11px] text-slate-400 mt-2">
+                  Cobrança mensal via Boleto / Pix Asaas
+                </p>
+              )}
             </div>
 
-            <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800">
-              <span className="text-slate-400 block">Taxa de Implantação / Setup Total:</span>
-              <p className="text-2xl font-extrabold text-white font-mono tabular-nums mt-1">
-                {formatBRL(fin.setupTotal)}
+            <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Taxa de Implantação / Setup:</span>
+                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800">
+                  {setupDetails.mode === 'installments' ? `Parcelado ${setupDetails.installmentsCount}x` : 'À Vista'}
+                </span>
+              </div>
+              <p className="text-2xl font-extrabold text-white font-mono tabular-nums">
+                {setupDetails.mode === 'installments'
+                  ? `${setupDetails.installmentsCount}x de ${formatBRL(setupDetails.installmentValue)}`
+                  : formatBRL(setupDetails.cashPrice)}
               </p>
-              <p className="text-[11px] text-slate-400 mt-1">
-                {fin.setupDiscountApplied ? 'Desconto comercial especial aplicado' : 'Pagamento único via Asaas'}
+              <p className="text-[11px] text-slate-400 font-mono">
+                {setupDetails.mode === 'installments'
+                  ? `Total parcelado: ${formatBRL(setupDetails.installmentTotal)} · À vista: ${formatBRL(setupDetails.cashPrice)}`
+                  : `Opção parcelada: ${setupDetails.installmentsCount}x de ${formatBRL(setupDetails.installmentValue)} (${formatBRL(setupDetails.installmentTotal)})`}
               </p>
+
+              {!isSigned && fin.allowClientChooseSetupMode !== false && onUpdateFinancials && (
+                <div className="pt-1.5 border-t border-slate-800 grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectClientSetupMode('cash')}
+                    className={`py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      setupDetails.mode === 'cash'
+                        ? 'bg-[#D40B3A] text-white shadow'
+                        : 'bg-[#16242A] text-slate-300 hover:text-white border border-slate-700'
+                    }`}
+                  >
+                    À Vista ({formatBRL(setupDetails.cashPrice)})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectClientSetupMode('installments')}
+                    className={`py-1.5 px-2 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      setupDetails.mode === 'installments'
+                        ? 'bg-[#D40B3A] text-white shadow'
+                        : 'bg-[#16242A] text-slate-300 hover:text-white border border-slate-700'
+                    }`}
+                  >
+                    {setupDetails.installmentsCount}x de {formatBRL(setupDetails.installmentValue)}
+                  </button>
+                </div>
+              )}
             </div>
 
-            <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800">
-              <span className="text-slate-400 block">Prazo & Vigência Contratual:</span>
-              <p className="text-sm font-bold text-white mt-1">Tempo Indeterminado</p>
-              <p className="text-[11px] text-slate-400 mt-1">Sem carência; rescisão com aviso prévio de 30 dias</p>
+            <div className="p-4 rounded-xl bg-[#111F24] border border-slate-800 flex flex-col justify-between">
+              <div>
+                <span className="text-slate-400 block">Prazo & Vigência Contratual:</span>
+                <p className="text-base font-bold text-white mt-1">Tempo Indeterminado</p>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-2">
+                Sem carência; rescisão com aviso prévio de 30 dias
+              </p>
             </div>
           </div>
         </div>
@@ -1048,6 +1163,13 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
                 </span>
               </label>
 
+              {validationError && (
+                <div className="p-3 rounded-xl bg-rose-950/80 border border-rose-700 text-rose-200 text-xs flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <span>{validationError}</span>
+                </div>
+              )}
+
               {/* Action Submit Button */}
               <button
                 type="button"
@@ -1128,6 +1250,7 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
                       proposal={proposal}
                       clientInfo={clientInfo}
                       currentPlan={currentPlan}
+                      allPlans={customPlans}
                       signatureData={signatureData}
                       isSigned={isSigned}
                     />

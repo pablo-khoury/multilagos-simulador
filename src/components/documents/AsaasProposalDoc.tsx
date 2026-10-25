@@ -1,7 +1,12 @@
 import React from 'react';
 import { CommercialProposal, ClientInfo, DigitalSignatureData, Plan } from '../../types';
 import { MULTILAGOS_INFO } from '../../data/mockData';
-import { formatBRL } from '../../utils/calculator';
+import {
+  formatBRL,
+  getSetupBillingDetails,
+  getEffectivePromptDiscountPercent,
+  formatCleanPercent,
+} from '../../utils/calculator';
 import { MultilagosLogo } from '../MultilagosLogo';
 import { ShieldCheck, CheckCircle2 } from 'lucide-react';
 
@@ -26,6 +31,9 @@ export const AsaasProposalDoc: React.FC<AsaasProposalDocProps> = ({
   const isPersonalizado = proposal.planId === 'personalizado';
 
   const fin = proposal.financials;
+  const setupDetails = getSetupBillingDetails(fin);
+  const promptPct = getEffectivePromptDiscountPercent(fin);
+  const hasPromptDiscount = fin.hasPromptPaymentDiscount !== false && promptPct > 0;
   const activeFeatures = proposal.customFeatures || currentPlan.features;
 
   return (
@@ -294,46 +302,79 @@ export const AsaasProposalDoc: React.FC<AsaasProposalDocProps> = ({
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-950 text-white font-bold">
-                    <th className="py-1 px-2 w-1/3">Item</th>
-                    <th className="py-1 px-2 w-1/4">Valor</th>
-                    <th className="py-1 px-2 w-5/12">Condição</th>
+                    <th className="py-1 px-2 w-[36%]">Item</th>
+                    <th className="py-1 px-2 w-[24%]">Valor</th>
+                    <th className="py-1 px-2 w-[40%]">Condição Comercial</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
-                  <tr>
-                    <td className="py-1 px-2 font-bold text-slate-900">Setup de Implantação (único)</td>
-                    <td className="py-1 px-2 font-mono font-bold text-slate-900">{formatBRL(fin.setupTotal)}</td>
-                    <td className="py-1 px-2 text-slate-700">À vista na ativação ou parcelado via Asaas</td>
-                  </tr>
-                  <tr className="bg-slate-50 text-[9.5px]">
-                    <td className="py-0.5 px-2 pl-5 text-slate-600">↳ Desconto sobre o setup</td>
-                    <td className="py-0.5 px-2 font-mono text-slate-700">
-                      {fin.setupDiscountApplied ? formatBRL(fin.setupDiscountValue) : 'Não'}
+                  <tr className={setupDetails.mode === 'cash' ? 'bg-amber-50/70' : ''}>
+                    <td className="py-1 px-2 font-bold text-slate-900">
+                      Setup de Implantação · À Vista
                     </td>
-                    <td className="py-0.5 px-2 text-slate-600">
-                      {fin.setupDiscountApplied ? (fin.setupDiscountReason || 'Condição comercial acordada') : 'Sem desconto aplicado'}
+                    <td className="py-1 px-2 font-mono font-bold text-slate-900">
+                      {formatBRL(setupDetails.cashPrice)}
+                    </td>
+                    <td className="py-1 px-2 text-slate-800 text-[9.5px]">
+                      {setupDetails.mode === 'cash' ? (
+                        <strong className="text-[#D40B3A]">☑ CONTRATADO À VISTA</strong>
+                      ) : (
+                        <span>Opção à vista na ativação</span>
+                      )}
+                      {fin.setupDiscountApplied && fin.setupDiscountValue > 0
+                        ? ` · Desc. ${formatBRL(fin.setupDiscountValue)} sobre ${formatBRL(fin.setupPrice)}${fin.setupDiscountReason ? ` (${fin.setupDiscountReason})` : ''}`
+                        : ''}
+                    </td>
+                  </tr>
+                  <tr className={setupDetails.mode === 'installments' ? 'bg-amber-50/70' : 'bg-slate-50'}>
+                    <td className="py-1 px-2 font-bold text-slate-900">
+                      Setup · Parcelado ({setupDetails.installmentsCount}x)
+                    </td>
+                    <td className="py-1 px-2 font-mono font-bold text-slate-900">
+                      {setupDetails.installmentsCount}x de {formatBRL(setupDetails.installmentValue)}
+                    </td>
+                    <td className="py-1 px-2 text-slate-800 text-[9.5px]">
+                      {setupDetails.mode === 'installments' ? (
+                        <strong className="text-[#D40B3A]">
+                          ☑ CONTRATADO PARCELADO · Total: {formatBRL(setupDetails.installmentTotal)}
+                        </strong>
+                      ) : (
+                        <span>Total parcelado: {formatBRL(setupDetails.installmentTotal)} via Asaas</span>
+                      )}
                     </td>
                   </tr>
                   <tr>
                     <td className="py-1 px-2 font-bold text-slate-900">Mensalidade de Gestão e Suporte</td>
-                    <td className="py-1 px-2 font-mono font-bold text-[#D40B3A]">{formatBRL(fin.monthlyTotal)}</td>
-                    <td className="py-1 px-2 text-slate-700">Vencimento todo dia {fin.dueDay || 10} · 1ª em {proposal.createdAt}</td>
+                    <td className="py-1 px-2 font-mono font-bold text-[#D40B3A]">{formatBRL(fin.monthlyTotal)}/mês</td>
+                    <td className="py-1 px-2 text-slate-700 text-[9.5px]">
+                      Vencimento todo dia {String(fin.dueDay || 10).padStart(2, '0')} · 1ª em {proposal.createdAt}
+                    </td>
                   </tr>
                   <tr className="bg-slate-50 text-[9.5px]">
-                    <td className="py-0.5 px-2 pl-5 text-slate-600">↳ Desconto sobre mensalidade</td>
+                    <td className="py-0.5 px-2 pl-4 text-slate-600">↳ Desconto fixo sobre mensalidade</td>
                     <td className="py-0.5 px-2 font-mono text-slate-700">
-                      {fin.monthlyDiscountApplied ? formatBRL(fin.monthlyDiscountValue) : 'Não'}
+                      {fin.monthlyDiscountApplied ? `- ${formatBRL(fin.monthlyDiscountValue)}` : 'Não'}
                     </td>
                     <td className="py-0.5 px-2 text-slate-600">
-                      {fin.monthlyDiscountApplied ? (fin.monthlyDiscountReason || 'Desconto acordado') : 'Sem desconto recorrente'}
+                      {fin.monthlyDiscountApplied
+                        ? `${fin.monthlyDiscountReason || 'Desconto acordado'} (Tabela: ${formatBRL(fin.monthlyPrice)})`
+                        : 'Sem desconto fixo recorrente'}
                     </td>
                   </tr>
-                  <tr className="bg-emerald-50 font-semibold text-emerald-950">
-                    <td className="py-1 px-2 font-bold">Mensalidade com pontualidade (5% desc.)</td>
-                    <td className="py-1 px-2 font-mono font-extrabold text-emerald-700">
-                      {formatBRL(fin.monthlyWithPromptDiscount || Math.round(fin.monthlyTotal * 0.95))}
+                  <tr className={hasPromptDiscount ? 'bg-emerald-50 font-semibold text-emerald-950' : 'bg-slate-50 text-slate-700'}>
+                    <td className="py-1 px-2 font-bold">
+                      {hasPromptDiscount
+                        ? `Mensalidade até o dia 05 (${formatCleanPercent(promptPct)}% desc.)`
+                        : 'Desconto de pontualidade (até dia 05)'}
                     </td>
-                    <td className="py-1 px-2 text-emerald-900 text-[9.5px]">Pagamento realizado até o dia 05 do mês</td>
+                    <td className={`py-1 px-2 font-mono font-extrabold ${hasPromptDiscount ? 'text-emerald-700' : 'text-slate-600'}`}>
+                      {hasPromptDiscount ? `${formatBRL(fin.monthlyWithPromptDiscount)}/mês` : 'Não aplicável'}
+                    </td>
+                    <td className={`py-1 px-2 text-[9.5px] ${hasPromptDiscount ? 'text-emerald-900' : 'text-slate-600'}`}>
+                      {hasPromptDiscount
+                        ? `${formatCleanPercent(promptPct)}% de desconto p/ pagamento até o dia 05 (após dia 05: ${formatBRL(fin.monthlyTotal)})`
+                        : `Valor integral de ${formatBRL(fin.monthlyTotal)} até o vencimento (dia ${String(fin.dueDay || 10).padStart(2, '0')})`}
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -348,7 +389,14 @@ export const AsaasProposalDoc: React.FC<AsaasProposalDocProps> = ({
                 <div className="divide-y divide-slate-200">
                   {proposal.selectedServices.map((serv, idx) => (
                     <div key={idx} className="flex items-center justify-between py-0.5 px-2">
-                      <span className="font-semibold text-slate-900">• {serv.name}</span>
+                      <span className="font-semibold text-slate-900">
+                        • {serv.name}
+                        {serv.category === 'regua-n8n' && (
+                          <span className="text-slate-500 font-normal">
+                            {' '}({(serv.reguaPortfolioType || proposal.reguaPortfolioType) === 'client' ? 'Portfólio Cliente · Meta direta' : 'Portfólio Multilagos · Meta inclusa'})
+                          </span>
+                        )}
+                      </span>
                       <span className="font-mono text-slate-700">
                         Setup: {formatBRL(serv.setupPrice)} | Mensal: <strong className="text-[#D40B3A]">{formatBRL(serv.monthlyPrice)}/mês</strong>
                       </span>
@@ -556,14 +604,33 @@ export const AsaasProposalDoc: React.FC<AsaasProposalDocProps> = ({
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 text-[10px]">
+            <div className="grid grid-cols-3 gap-2 text-[10px]">
               <div>
-                <span className="text-slate-500 block">Mensalidade Acordada:</span>
-                <span className="text-base font-bold text-[#D40B3A] font-mono">{formatBRL(fin.monthlyTotal)}</span>
+                <span className="text-slate-500 block">Mensalidade (Venc. dia {String(fin.dueDay || 10).padStart(2, '0')}):</span>
+                <span className="text-sm font-bold text-[#D40B3A] font-mono">{formatBRL(fin.monthlyTotal)}/mês</span>
               </div>
               <div>
-                <span className="text-slate-500 block">Implantação / Setup:</span>
-                <span className="text-base font-bold text-slate-900 font-mono">{formatBRL(fin.setupTotal)}</span>
+                <span className="text-slate-500 block">
+                  {hasPromptDiscount ? `Até o Dia 05 (-${formatCleanPercent(promptPct)}%):` : 'Pagamento até Dia 05:'}
+                </span>
+                <span className={`text-sm font-bold font-mono ${hasPromptDiscount ? 'text-emerald-700' : 'text-slate-700'}`}>
+                  {hasPromptDiscount ? `${formatBRL(fin.monthlyWithPromptDiscount)}/mês` : `${formatBRL(fin.monthlyTotal)}/mês`}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-500 block">
+                  Setup ({setupDetails.mode === 'installments' ? `Parcelado em ${setupDetails.installmentsCount}x` : 'À Vista'}):
+                </span>
+                <span className="text-sm font-bold text-slate-900 font-mono block">
+                  {setupDetails.mode === 'installments'
+                    ? `${setupDetails.installmentsCount}x de ${formatBRL(setupDetails.installmentValue)}`
+                    : `${formatBRL(setupDetails.cashPrice)} à vista`}
+                </span>
+                <span className="text-[8.5px] text-slate-500 font-mono">
+                  {setupDetails.mode === 'installments'
+                    ? `Total: ${formatBRL(setupDetails.installmentTotal)} · À vista: ${formatBRL(setupDetails.cashPrice)}`
+                    : `Parcelado: ${setupDetails.installmentsCount}x ${formatBRL(setupDetails.installmentValue)} (${formatBRL(setupDetails.installmentTotal)})`}
+                </span>
               </div>
             </div>
 

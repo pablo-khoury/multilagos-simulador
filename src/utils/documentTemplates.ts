@@ -195,67 +195,59 @@ A Multilagos, na qualidade de parceira e consultora oficial Asaas, apresenta a p
 
 ### PLANO 1: ESSENCIAL
 - **Indicado para:** Pequenas operações que precisam padronizar recebíveis e sair do manual.
-- **Investimento:** Setup: R$ 750,00 | Mensalidade: R$ 99,00/mês
+- **Investimento Base:** Setup a partir de R$ 750,00 | Mensalidade a partir de R$ 99,00/mês
 - **Entregáveis Inclusos:**
   - Consultoria de setup inicial e homologação cadastral completa
   - Treinamento operacional da equipe financeira
   - Migração da base de clientes e cobranças
-  - Régua de cobrança completa (e-mail, SMS e link WhatsApp)
+  - Régua de cobrança completa (WhatsApp, e-mail e SMS)
   - Fatura personalizada com logotipo da sua empresa
-  - Suporte via canal WhatsApp em horário comercial
 
-### PLANO 2: PRO (MAIS INDICADO ⭐)
-- **Indicado para:** Empresas em consolidação que demandam automação contábil e suporte próximo.
-- **Investimento:** Setup: R$ 1.500,00 | Mensalidade: R$ 249,00/mês
+### PLANO 2: PRO (MAIS INDICADO)
+- **Indicado para:** Negócios de serviços e recorrência que demandam automação fiscal de NFS-e.
+- **Investimento Base:** Setup a partir de R$ 2.500,00 | Mensalidade a partir de R$ 379,00/mês
 - **Entregáveis Inclusos:**
   - Todos os itens do plano Essencial
-  - Robô de cobrança e automação de lembretes avançada
-  - Emissão 100% automatizada de NFS-e (Notas Fiscais de Serviço) integradas
-  - Parametrização avançada de multas, juros e descontos pontualidade
-  - Consultoria estratégica mensal com Pablo Khoury
-  - Atendimento prioritário e SLA de 4 horas úteis
+  - Nota fiscal de serviço automática (NFS-e)
+  - SLA Prioritário em até 4h úteis
 
 ### PLANO 3: PERFORMANCE
-- **Indicado para:** Empresas com múltiplos sócios, unidades ou parceiros que exigem automação total.
-- **Investimento:** Setup: R$ 2.400,00 | Mensalidade: R$ 499,00/mês
+- **Indicado para:** Empresas em expansão que utilizam ERP e exigem Split de Pagamento e BI.
+- **Investimento Base:** Setup a partir de R$ 3.500,00 | Mensalidade a partir de R$ 599,00/mês
 - **Entregáveis Inclusos:**
   - Todos os itens do plano PRO
-  - Split de pagamento automático entre contas e parceiros
-  - Integrações avançadas via Webhooks e API Asaas com ERP da empresa
-  - Análise executiva de fluxo de caixa e redução da inadimplência
-  - Consultoria quinzenal com Pablo Khoury
-  - SLA Crítico de 2 horas úteis
+  - Split de pagamento automático
+  - Integração com ERPs (Omie, Conta Azul, etc.) e Dashboard avançado
+  - Consultoria estratégica mensal com Pablo Khoury
 
 ### PLANO 4: PERSONALIZADO
-- **Indicado para:** Operações complexas, redes, franquias ou demandas sob medida.
-- **Investimento:** Setup: R$ 4.800,00 (ou sob consulta) | Mensalidade: R$ 990,00/mês
+- **Indicado para:** Operações complexas, redes, franquias ou fluxos sob medida.
+- **Investimento Base:** Setup a partir de R$ 4.800,00 (ou sob consulta) | Mensalidade a partir de R$ 950,00/mês
 - **Entregáveis Inclusos:**
-  - Todos os itens dos planos anteriores com SLA de 1 hora
-  - Parametrizações customizadas no ERP e esteira sob medida
-  - Gestor de conta exclusivo Multilagos
-  - Consultoria semanal com Pablo Khoury
+  - Todos os itens dos planos anteriores com SLA Imediato
+  - Fluxos personalizados de processos e onboarding sob medida
 
 ---
 
-## 3. TABELA OFICIAL DE TARIFAS ASAAS (CONDIÇÕES EXCLUSIVAS MULTILAGOS)
+## 3. CONDIÇÕES COMERCIAIS DE IMPLANTAÇÃO (SETUP) E PONTUALIDADE
+- **Modalidades de Pagamento do Setup:**
+  - **Opção À Vista:** Valor com condição à vista na ativação do contrato via Pix ou Boleto Asaas.
+  - **Opção Parcelada:** Parcelamento em até **Nx mensais** conforme quadro de Resumo Financeiro da proposta vinculada.
+- **Benefício de Pontualidade (Pagamento até o Dia 05):**
+  - Percentual de desconto configurável na Proposta Comercial (padrão de **5%**, ajustável conforme negociação) válido exclusivamente para pagamentos efetuados **até o dia 05 de cada mês**. Após o dia 05 até a data de vencimento padrão, aplica-se o valor integral da mensalidade contratada.
+
+---
+
+## 4. TABELA OFICIAL DE TARIFAS ASAAS (CONDIÇÕES EXCLUSIVAS MULTILAGOS)
 - **Pix Recebido:** R$ 0,99 por liquidação (Sem custo de emissão ou cancelamento).
 - **Boleto Bancário:** R$ 1,89 por boleto compensado (Sem taxa de emissão, baixa ou cancelamento).
-- **Cartão de Crédito à Vista:** R$ 0,29 + 2,93% por transação aprovada.
+- **Cartão de Crédito à Vista:** R$ 0,29 + 2,93% por transação aprovada (parcelado sob consulta).
 - **Cartão de Débito:** R$ 0,35 + 1,89% por transação.
-- **Emissão de NFS-e:** Automatizada diretamente pelo gateway.
-
----
-
-## 4. CRONOGRAMA DE ATIVAÇÃO
-- Etapa 1 (Dias 1 a 3): Envio de documentos, abertura e homologação da conta no Asaas.
-- Etapa 2 (Dias 4 a 7): Configuração de faturas, taxas, certificação fiscal de NFS-e e webhook.
-- Etapa 3 (Dias 8 a 12): Importação e migração de carteira ativa de clientes e contratos.
-- Etapa 4 (Dias 13 a 15): Treinamento da equipe, simulações em ambiente seguro e Go-Live oficial.
 `;
 }
 
 export function getMulticobrancaProposalMarkdown(): string {
-  return `# PROPOSTA COMERCIAL · MULTICOBRANÇA VIA WHATSAPP (N8N)
+  return `# PROPOSTA COMERCIAL · MULTICOBRANÇA VIA WHATSAPP
 **Documento Vinculado ao Contrato Mestre (MSA)**
 **Emissor:** MULTILAGOS – Negócios & Tecnologia Ltda (CNPJ: ${MULTILAGOS_INFO.cnpj})
 **Consultor Homologado:** ${MULTILAGOS_INFO.representativeName} (${MULTILAGOS_INFO.phone} / ${MULTILAGOS_INFO.email})
@@ -268,34 +260,27 @@ A Multilagos Multicobrança é uma esteira inteligente de mensagens automáticas
 
 ---
 
-## 2. FRANQUIAS E PLANOS DE MENSAGENS
+## 2. MODALIDADES DE PORTFÓLIO E TABELAS DE FRANQUIAS
 
-### Plano 1.000 Mensagens/mês
-- **Investimento:** Setup: R$ 650,00 | Mensalidade: R$ 149,00/mês
-- **Franquia:** Até 1.000 mensagens automáticas/mês
-- **Incluso:** Custos da Meta inclusos, conexão do WhatsApp próprio e régua de lembretes.
+### MODALIDADE A · PORTFÓLIO MULTILAGOS (MEU PORTFÓLIO — CUSTOS META INCLUSOS)
+Todos os custos de envio das conversas oficiais da Meta (WhatsApp), dentro da franquia mensal contratada, já estão integralmente inclusos na mensalidade:
+- **1.000 mensagens/mês:** Setup R$ 650,00 | Mensalidade R$ 179,00/mês
+- **3.000 mensagens/mês (Popular):** Setup R$ 950,00 | Mensalidade R$ 299,00/mês
+- **5.000 mensagens/mês:** Setup R$ 1.400,00 | Mensalidade R$ 499,00/mês
+- **10.000 mensagens/mês:** Setup R$ 1.900,00 | Mensalidade R$ 999,00/mês
 
-### Plano 3.000 Mensagens/mês (Mais Popular ⭐)
-- **Investimento:** Setup: R$ 950,00 | Mensalidade: R$ 299,00/mês
-- **Franquia:** Até 3.000 mensagens automáticas/mês
-- **Incluso:** Régua completa pré e pós-vencimento, follow-up de atrasos e SLA prioritário em 4h.
-
-### Plano 5.000 Mensagens/mês
-- **Investimento:** Setup: R$ 1.400,00 | Mensalidade: R$ 499,00/mês
-- **Franquia:** Até 5.000 mensagens automáticas/mês
-- **Incluso:** Suporte técnico para alto volume, réguas multinível e SLA de 2h úteis.
-
-### Plano 10.000 Mensagens/mês
-- **Investimento:** Setup: R$ 1.900,00 | Mensalidade: R$ 999,00/mês
-- **Franquia:** Até 10.000 mensagens automáticas/mês
-- **Incluso:** Atendimento crítico com SLA de 1 hora e relatórios semanais de entrega.
+### MODALIDADE B · PORTFÓLIO DO CLIENTE (BM PRÓPRIO — TARIFAS META DIRETAS)
+A API Oficial é conectada diretamente ao Portfólio Empresarial (Meta Business) da Contratante, com tarifas de conversas faturadas diretamente pela Meta à Contratante:
+- **1.000 mensagens/mês:** Setup R$ 650,00 | Mensalidade R$ 119,00/mês
+- **3.000 mensagens/mês (Popular):** Setup R$ 950,00 | Mensalidade R$ 199,00/mês
+- **5.000 mensagens/mês:** Setup R$ 1.400,00 | Mensalidade R$ 329,00/mês
+- **10.000 mensagens/mês:** Setup R$ 1.900,00 | Mensalidade R$ 599,00/mês
 
 ---
 
-## 3. BENEFÍCIOS COMPROVADOS
-- Aumento de 40% a 70% na recuperação de mensalidades antes do vencimento.
-- Eliminação total do trabalho manual de cobrança por funcionários.
-- Atendimento via WhatsApp oficial verificado, transmitindo confiança e profissionalismo.
+## 3. CONDIÇÕES DE PAGAMENTO DO SETUP E DESCONTO ATÉ O DIA 05
+- **Setup de Integração:** Pagamento à vista na ativação ou parcelado em **Nx** conforme Resumo Financeiro da proposta vinculada.
+- **Pontualidade na Mensalidade:** Desconto percentual configurável na proposta (padrão 5%) para quitação realizada até o **dia 05** de cada mês.
 `;
 }
 
@@ -308,10 +293,10 @@ export function getFullPackageProposalMarkdown(): string {
 ---
 
 ## VISÃO INTEGRADA DA SOLUÇÃO
-Ao unificar a conta digital homologada Asaas com a régua inteligente de WhatsApp e a consultoria executiva de BPO da Multilagos, a sua empresa conquista:
+Ao unificar a conta digital homologada Asaas com a régua inteligente de WhatsApp (no Portfólio Multilagos ou no Portfólio Meta do Cliente) e a consultoria executiva de BPO da Multilagos, a sua empresa conquista:
 1. **Redução Imediata de Custos:** Tarifas bancárias de Pix a R$ 0,99 e Boletos a R$ 1,89.
 2. **Automação Fiscal e Cobrança:** Emissão de NFS-e sem intervenção manual e régua via WhatsApp.
-3. **Previsibilidade de Caixa:** Recuperação de até 80% das mensalidades em atraso.
+3. **Flexibilidade de Implantação:** Setup com opção à vista ou parcelado em múltiplas vezes e desconto de pontualidade na mensalidade para pagamento até o dia 05.
 4. **Governança Jurídica:** Proteção integral via Contrato Mestre (MSA) e auditoria LGPD.
 `;
 }

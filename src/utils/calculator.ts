@@ -1,4 +1,13 @@
-import { Plan, PlanId, ServiceTrack, DiagnosticSheetData, CommercialProposal } from '../types';
+import {
+  Plan,
+  PlanId,
+  ServiceTrack,
+  DiagnosticSheetData,
+  CommercialProposal,
+  ProposalFinancials,
+  ReguaPortfolioType,
+  SetupPaymentMode,
+} from '../types';
 import { ALL_INITIAL_PLANS } from '../data/mockData';
 
 export function formatBRL(value: number): string {
@@ -12,6 +21,143 @@ export function formatBRL(value: number): string {
 
 export function formatPercent(value: number): string {
   return `${(value * 100).toFixed(2).replace('.', ',')}%`;
+}
+
+export function formatCleanPercent(pct: number): string {
+  if (!Number.isFinite(pct)) return '0';
+  return Number.isInteger(pct) ? String(pct) : pct.toFixed(1).replace('.', ',');
+}
+
+export function getDefaultPromptDiscountPercent(): number {
+  try {
+    const raw = localStorage.getItem('multilagos_default_prompt_discount_pct');
+    if (raw !== null && raw !== '') {
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 100) {
+        return parsed;
+      }
+    }
+  } catch {}
+  return 5;
+}
+
+export function getEffectivePromptDiscountPercent(fin?: Partial<ProposalFinancials>): number {
+  if (!fin || fin.hasPromptPaymentDiscount === false) return 0;
+  if (typeof fin.promptPaymentDiscountPercent === 'number' && Number.isFinite(fin.promptPaymentDiscountPercent)) {
+    return Math.max(0, Math.min(100, fin.promptPaymentDiscountPercent));
+  }
+  return 5;
+}
+
+export function calculateMonthlyWithPromptDiscount(
+  monthlyTotal: number,
+  hasDiscount: boolean,
+  percent = 5
+): number {
+  const safeMonthly = Math.max(0, monthlyTotal || 0);
+  if (!hasDiscount || percent <= 0) {
+    return Number(safeMonthly.toFixed(2));
+  }
+  const cleanPct = Math.max(0, Math.min(100, percent));
+  return Number((safeMonthly * (1 - cleanPct / 100)).toFixed(2));
+}
+
+export interface SetupBillingDetails {
+  mode: SetupPaymentMode;
+  cashPrice: number;
+  installmentTotal: number;
+  installmentsCount: number;
+  installmentValue: number;
+  contractedTotal: number;
+  shortSummary: string;
+  fullBillingNote: string;
+}
+
+export function getSetupBillingDetails(fin: ProposalFinancials): SetupBillingDetails {
+  const mode: SetupPaymentMode = fin.setupPaymentMode === 'installments' ? 'installments' : 'cash';
+  const defaultBase = Math.max(0, fin.setupPrice - (fin.setupDiscountApplied ? (fin.setupDiscountValue || 0) : 0));
+  const cashPrice =
+    typeof fin.setupCashPrice === 'number' && Number.isFinite(fin.setupCashPrice)
+      ? Math.max(0, fin.setupCashPrice)
+      : (mode === 'cash' ? fin.setupTotal : defaultBase);
+  const installmentTotal =
+    typeof fin.setupInstallmentTotal === 'number' && Number.isFinite(fin.setupInstallmentTotal)
+      ? Math.max(0, fin.setupInstallmentTotal)
+      : (mode === 'installments' ? fin.setupTotal : cashPrice);
+  const installmentsCount = Math.max(1, Math.round(fin.setupInstallmentsCount || 3));
+  const installmentValue = Number((installmentTotal / installmentsCount).toFixed(2));
+  const contractedTotal = mode === 'installments' ? installmentTotal : cashPrice;
+
+  const shortSummary =
+    mode === 'installments'
+      ? `Parcelado em ${installmentsCount}x de ${formatBRL(installmentValue)} (Total ${formatBRL(installmentTotal)})`
+      : `À vista: ${formatBRL(cashPrice)}`;
+
+  const fullBillingNote =
+    mode === 'installments'
+      ? `Parcelado em ${installmentsCount}x de ${formatBRL(installmentValue)} (Total parcelado: ${formatBRL(installmentTotal)} | Preço à vista: ${formatBRL(cashPrice)})`
+      : `À vista por ${formatBRL(cashPrice)} (Opção parcelada: ${installmentsCount}x de ${formatBRL(installmentValue)} = ${formatBRL(installmentTotal)})`;
+
+  return {
+    mode,
+    cashPrice,
+    installmentTotal,
+    installmentsCount,
+    installmentValue,
+    contractedTotal,
+    shortSummary,
+    fullBillingNote,
+  };
+}
+
+const DEFAULT_CLIENT_PORTFOLIO_MONTHLY: Record<string, number> = {
+  'regua-1k': 119,
+  'regua-3k': 199,
+  'regua-5k': 329,
+  'regua-10k': 599,
+};
+
+export function getReguaPlanPrices(
+  plan: Plan,
+  portfolio: ReguaPortfolioType = 'multilagos'
+): { monthlyPrice: number; setupPrice: number } {
+  if (portfolio === 'client') {
+    const fallbackMonthly = DEFAULT_CLIENT_PORTFOLIO_MONTHLY[plan.id] ?? Math.round(plan.baseMonthlyPrice * 0.67);
+    return {
+      monthlyPrice:
+        typeof plan.clientPortfolioMonthlyPrice === 'number' && Number.isFinite(plan.clientPortfolioMonthlyPrice)
+          ? plan.clientPortfolioMonthlyPrice
+          : fallbackMonthly,
+      setupPrice:
+        typeof plan.clientPortfolioSetupPrice === 'number' && Number.isFinite(plan.clientPortfolioSetupPrice)
+          ? plan.clientPortfolioSetupPrice
+          : plan.baseSetupPrice,
+    };
+  }
+  return {
+    monthlyPrice: plan.baseMonthlyPrice,
+    setupPrice: plan.baseSetupPrice,
+  };
+}
+
+export function getReguaFeaturesForPortfolio(
+  plan: Plan,
+  portfolio: ReguaPortfolioType = 'multilagos'
+): string[] {
+  const base = plan.features || [];
+  const filtered = base.filter(
+    (f) => !f.toLowerCase().includes('custos da meta') && !f.toLowerCase().includes('portfólio empresarial')
+  );
+  if (portfolio === 'client') {
+    return [
+      ...filtered,
+      'Conexão no Portfólio Meta (BM) do Cliente — tarifas de conversas pagas diretamente à Meta',
+    ];
+  }
+  return [
+    ...filtered,
+    'Custos da Meta (WhatsApp) incluídos na mensalidade (Portfólio Multilagos)',
+  ];
 }
 
 export function generateProposalCode(): { propId: string; msaId: string } {
@@ -362,21 +508,32 @@ export function encodeProposalToUrlParam(proposal: CommercialProposal): string {
       if (wh && String(wh).trim()) savedWebhookUrl = String(wh).trim();
     } catch {}
 
+    const setupDetails = getSetupBillingDetails(proposal.financials);
+    const promptPct = getEffectivePromptDiscountPercent(proposal.financials);
+
     const compact: Record<string, any> = {
       id: proposal.id,
       mId: proposal.contractMasterId,
       tr: proposal.serviceTrack,
       pId: proposal.planId,
+      rPT: proposal.reguaPortfolioType || 'multilagos',
       sP: proposal.financials.setupPrice,
       sD: proposal.financials.setupDiscountApplied,
       sDV: proposal.financials.setupDiscountValue,
       sDR: proposal.financials.setupDiscountReason || '',
       sT: proposal.financials.setupTotal,
+      sPM: setupDetails.mode,
+      sCP: setupDetails.cashPrice,
+      sIT: setupDetails.installmentTotal,
+      sIC: setupDetails.installmentsCount,
+      sAC: proposal.financials.allowClientChooseSetupMode !== false,
       mP: proposal.financials.monthlyPrice,
       mD: proposal.financials.monthlyDiscountApplied,
       mDV: proposal.financials.monthlyDiscountValue,
       mDR: proposal.financials.monthlyDiscountReason || '',
       mT: proposal.financials.monthlyTotal,
+      hPP: proposal.financials.hasPromptPaymentDiscount !== false && promptPct > 0,
+      pPP: promptPct,
       mWP: proposal.financials.monthlyWithPromptDiscount,
       dD: proposal.financials.dueDay,
       cn: proposal.clientInfo.companyName,
@@ -429,24 +586,37 @@ export function decodeProposalFromUrlParam(param: string): Partial<CommercialPro
       } catch {}
     }
 
+    const hasPrompt = typeof data.hPP === 'boolean' ? data.hPP : true;
+    const promptPct = typeof data.pPP === 'number' ? data.pPP : (hasPrompt ? 5 : 0);
+
     return {
       id: data.id,
       contractMasterId: data.mId,
       serviceTrack: data.tr,
       planId: data.pId,
+      reguaPortfolioType: data.rPT === 'client' ? 'client' : 'multilagos',
       financials: {
         setupPrice: data.sP,
         setupDiscountApplied: data.sD,
         setupDiscountValue: data.sDV,
         setupDiscountReason: data.sDR,
         setupTotal: data.sT,
+        setupPaymentMode: data.sPM === 'installments' ? 'installments' : 'cash',
+        setupCashPrice: typeof data.sCP === 'number' ? data.sCP : data.sT,
+        setupInstallmentTotal: typeof data.sIT === 'number' ? data.sIT : data.sT,
+        setupInstallmentsCount: typeof data.sIC === 'number' ? data.sIC : 3,
+        allowClientChooseSetupMode: data.sAC !== false,
         monthlyPrice: data.mP,
         monthlyDiscountApplied: data.mD,
         monthlyDiscountValue: data.mDV,
         monthlyDiscountReason: data.mDR,
         monthlyTotal: data.mT,
-        hasPromptPaymentDiscount: true,
-        monthlyWithPromptDiscount: data.mWP,
+        hasPromptPaymentDiscount: hasPrompt,
+        promptPaymentDiscountPercent: promptPct,
+        monthlyWithPromptDiscount:
+          typeof data.mWP === 'number'
+            ? data.mWP
+            : calculateMonthlyWithPromptDiscount(data.mT || 0, hasPrompt, promptPct),
         dueDay: data.dD || 10,
       },
       clientInfo: {

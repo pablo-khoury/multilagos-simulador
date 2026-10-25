@@ -21,7 +21,8 @@ import {
   ServiceTrack,
   DiagnosticSheetData,
   ProposalFinancials,
-  ClientPricingTier
+  ClientPricingTier,
+  ReguaPortfolioType
 } from './types';
 
 import { 
@@ -36,7 +37,9 @@ import {
   generateProposalCode, 
   getFormattedCurrentDate, 
   getValidityDate,
-  decodeProposalFromUrlParam
+  decodeProposalFromUrlParam,
+  getDefaultPromptDiscountPercent,
+  calculateMonthlyWithPromptDiscount
 } from './utils/calculator';
 
 const STORAGE_KEYS = {
@@ -55,10 +58,33 @@ export default function App() {
   // Proposal identification codes
   const [codes] = useState(() => generateProposalCode());
 
-  // Admin editable states with localStorage persistence
+  // Admin editable states with localStorage persistence (merged with defaults for new portfolio fields)
   const [plans, setPlans] = useState<Plan[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.PLANS);
-    return saved ? JSON.parse(saved) : ALL_INITIAL_PLANS;
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.PLANS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return ALL_INITIAL_PLANS.map((defPlan) => {
+            const found = parsed.find((p: Plan) => p.id === defPlan.id);
+            if (!found) return defPlan;
+            return {
+              ...defPlan,
+              ...found,
+              clientPortfolioMonthlyPrice:
+                typeof found.clientPortfolioMonthlyPrice === 'number'
+                  ? found.clientPortfolioMonthlyPrice
+                  : defPlan.clientPortfolioMonthlyPrice,
+              clientPortfolioSetupPrice:
+                typeof found.clientPortfolioSetupPrice === 'number'
+                  ? found.clientPortfolioSetupPrice
+                  : defPlan.clientPortfolioSetupPrice,
+            };
+          });
+        }
+      }
+    } catch {}
+    return ALL_INITIAL_PLANS;
   });
 
   const [asaasConfig, setAsaasConfig] = useState<AsaasConfig>(() => {
@@ -92,19 +118,30 @@ export default function App() {
   // Active Proposal Object
   const [activeProposal, setActiveProposal] = useState<CommercialProposal>(() => {
     const basePlan = ALL_INITIAL_PLANS.find((p) => p.id === 'pro') || ALL_INITIAL_PLANS[0];
+    const defaultPromptPct = getDefaultPromptDiscountPercent();
     const initialFinancials: ProposalFinancials = {
       setupPrice: basePlan.baseSetupPrice,
       setupDiscountApplied: false,
       setupDiscountValue: 0,
       setupDiscountReason: '',
       setupTotal: basePlan.baseSetupPrice,
+      setupPaymentMode: 'cash',
+      setupCashPrice: basePlan.baseSetupPrice,
+      setupInstallmentTotal: basePlan.baseSetupPrice,
+      setupInstallmentsCount: 3,
+      allowClientChooseSetupMode: true,
       monthlyPrice: basePlan.baseMonthlyPrice,
       monthlyDiscountApplied: false,
       monthlyDiscountValue: 0,
       monthlyDiscountReason: '',
       monthlyTotal: basePlan.baseMonthlyPrice,
-      hasPromptPaymentDiscount: true,
-      monthlyWithPromptDiscount: Math.round(basePlan.baseMonthlyPrice * 0.95),
+      hasPromptPaymentDiscount: defaultPromptPct > 0,
+      promptPaymentDiscountPercent: defaultPromptPct,
+      monthlyWithPromptDiscount: calculateMonthlyWithPromptDiscount(
+        basePlan.baseMonthlyPrice,
+        defaultPromptPct > 0,
+        defaultPromptPct
+      ),
       dueDay: 10,
     };
 
@@ -120,6 +157,7 @@ export default function App() {
       
       serviceTrack: 'esteira-asaas',
       planId: 'pro',
+      reguaPortfolioType: 'multilagos',
 
       clientInfo: {
         companyName: INITIAL_DIAGNOSTIC_SHEET.companyName,
@@ -208,17 +246,28 @@ export default function App() {
     setSelectedPlanId(planId);
     
     const targetPlan = plans.find((p) => p.id === planId) || plans[0];
+    const defaultPromptPct = getDefaultPromptDiscountPercent();
     const newFinancials: ProposalFinancials = {
       setupPrice: targetPlan.baseSetupPrice,
       setupDiscountApplied: false,
       setupDiscountValue: 0,
       setupTotal: targetPlan.baseSetupPrice,
+      setupPaymentMode: 'cash',
+      setupCashPrice: targetPlan.baseSetupPrice,
+      setupInstallmentTotal: targetPlan.baseSetupPrice,
+      setupInstallmentsCount: 3,
+      allowClientChooseSetupMode: true,
       monthlyPrice: targetPlan.baseMonthlyPrice,
       monthlyDiscountApplied: false,
       monthlyDiscountValue: 0,
       monthlyTotal: targetPlan.baseMonthlyPrice,
-      hasPromptPaymentDiscount: true,
-      monthlyWithPromptDiscount: Math.round(targetPlan.baseMonthlyPrice * 0.95),
+      hasPromptPaymentDiscount: defaultPromptPct > 0,
+      promptPaymentDiscountPercent: defaultPromptPct,
+      monthlyWithPromptDiscount: calculateMonthlyWithPromptDiscount(
+        targetPlan.baseMonthlyPrice,
+        defaultPromptPct > 0,
+        defaultPromptPct
+      ),
       dueDay: 10,
     };
 
@@ -260,6 +309,13 @@ export default function App() {
     setActiveProposal((prev) => ({
       ...prev,
       planId,
+    }));
+  };
+
+  const handleUpdateReguaPortfolio = (reguaPortfolioType: ReguaPortfolioType) => {
+    setActiveProposal((prev) => ({
+      ...prev,
+      reguaPortfolioType,
     }));
   };
 
@@ -340,6 +396,7 @@ export default function App() {
               diagnosticData={diagnosticData}
               onUpdateTrack={handleUpdateTrack}
               onUpdatePlan={handleUpdatePlan}
+              onUpdateReguaPortfolio={handleUpdateReguaPortfolio}
               onUpdateFinancials={handleUpdateFinancials}
               onUpdateNotes={(notes) => setActiveProposal((prev) => ({ ...prev, notes }))}
               onUpdateCustomFeatures={handleUpdateCustomFeatures}
@@ -360,6 +417,7 @@ export default function App() {
             asaasConfig={asaasConfig}
             customPlans={plans}
             isClientDirectAccess={isClientDirectAccess}
+            onUpdateFinancials={handleUpdateFinancials}
             onProposalSigned={(updated) => setActiveProposal(updated)}
             onBackToConsultantView={() => {
               setCurrentTab('simulador');

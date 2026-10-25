@@ -28,8 +28,18 @@ export interface ProposalSheetRecord {
   phone: string;
   cityState?: string;
   servicesSummary: string;
+  reguaPortfolioLabel?: string;
+  setupPaymentMode?: string;
+  setupCashPrice?: number;
+  setupInstallmentTotal?: number;
+  setupInstallmentsCount?: number;
+  setupInstallmentValue?: number;
+  setupConditionSummary?: string;
   setupTotal: number;
   monthlyTotal: number;
+  dueDay?: number;
+  promptPaymentDiscountPercent?: number;
+  monthlyWithPromptDiscount?: number;
   asaasStatus?: string;
   asaasPaymentId?: string;
   verificationHash?: string;
@@ -198,8 +208,17 @@ export async function getOrCreateSpreadsheet(
     'Telefone / WhatsApp',
     'Cidade / UF',
     'Serviços Contratados',
-    'Valor de Setup (R$)',
+    'Portfólio Régua WhatsApp',
+    'Modalidade Setup',
+    'Setup à Vista (R$)',
+    'Setup Parcelado Total (R$)',
+    'Qtd Parcelas Setup',
+    'Valor Parcela Setup (R$)',
+    'Valor de Setup Contratado (R$)',
     'Mensalidade Total (R$)',
+    'Dia Vencimento',
+    '% Desc. até Dia 05',
+    'Mensalidade até Dia 05 (R$)',
     'Status Asaas',
     'ID Fatura Asaas',
     'Hash de Assinatura Digital',
@@ -298,8 +317,17 @@ export async function appendProposalRowToSheet(
     data.phone,
     data.cityState || '',
     data.servicesSummary,
+    data.reguaPortfolioLabel || 'N/A',
+    data.setupConditionSummary || (data.setupPaymentMode === 'installments' ? 'Parcelado' : 'À Vista'),
+    data.setupCashPrice ?? data.setupTotal,
+    data.setupInstallmentTotal ?? data.setupTotal,
+    data.setupInstallmentsCount ?? 1,
+    data.setupInstallmentValue ?? data.setupTotal,
     data.setupTotal,
     data.monthlyTotal,
+    data.dueDay ? `Dia ${String(data.dueDay).padStart(2, '0')}` : 'Dia 10',
+    typeof data.promptPaymentDiscountPercent === 'number' ? `${data.promptPaymentDiscountPercent}%` : '5%',
+    data.monthlyWithPromptDiscount ?? data.monthlyTotal,
     data.asaasStatus || 'Ativado',
     data.asaasPaymentId || '',
     data.verificationHash || '',
@@ -495,8 +523,11 @@ function getOrCreateSheet_(sheetTitle, folder) {
   var headers = [
     'Data/Hora Assinatura', 'Nº Proposta', 'Nº Contrato Mestre', 'Razão Social',
     'Nome Fantasia', 'CNPJ', 'Representante Legal', 'Cargo', 'CPF', 'E-mail',
-    'Telefone / WhatsApp', 'Cidade/UF', 'Serviços Contratados', 'Setup Total (R$)',
-    'Mensalidade Total (R$)', 'Status Asaas', 'ID Cobrança Asaas',
+    'Telefone / WhatsApp', 'Cidade/UF', 'Serviços Contratados', 'Portfólio Régua WhatsApp',
+    'Modalidade Setup', 'Setup à Vista (R$)', 'Setup Parcelado Total (R$)',
+    'Qtd Parcelas Setup', 'Valor Parcela Setup (R$)', 'Setup Contratado (R$)',
+    'Mensalidade Total (R$)', 'Dia Vencimento', '% Desc. até Dia 05', 'Mensalidade até Dia 05 (R$)',
+    'Status Asaas', 'ID Cobrança Asaas',
     'Hash Assinatura Digital', 'IP Verificado', 'Link PDF Proposta (Drive)', 'Link PDF Contrato (Drive)'
   ];
   sheet.appendRow(headers);
@@ -558,8 +589,17 @@ function doPost(e) {
       r.phone || '',
       r.cityState || '',
       r.servicesSummary || '',
+      r.reguaPortfolioLabel || 'N/A',
+      r.setupConditionSummary || (r.setupPaymentMode === 'installments' ? 'Parcelado' : 'À Vista'),
+      r.setupCashPrice !== undefined ? r.setupCashPrice : (r.setupTotal || 0),
+      r.setupInstallmentTotal !== undefined ? r.setupInstallmentTotal : (r.setupTotal || 0),
+      r.setupInstallmentsCount || 1,
+      r.setupInstallmentValue !== undefined ? r.setupInstallmentValue : (r.setupTotal || 0),
       r.setupTotal || 0,
       r.monthlyTotal || 0,
+      r.dueDay ? ('Dia ' + r.dueDay) : 'Dia 10',
+      r.promptPaymentDiscountPercent !== undefined ? (r.promptPaymentDiscountPercent + '%') : '5%',
+      r.monthlyWithPromptDiscount !== undefined ? r.monthlyWithPromptDiscount : (r.monthlyTotal || 0),
       r.asaasStatus || 'Ativado',
       r.asaasPaymentId || '',
       r.verificationHash || '',

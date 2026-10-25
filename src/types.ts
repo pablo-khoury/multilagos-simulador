@@ -10,6 +10,10 @@ export type PlanId =
   | 'regua-5k' 
   | 'regua-10k';
 
+export type ReguaPortfolioType = 'multilagos' | 'client';
+
+export type SetupPaymentMode = 'cash' | 'installments';
+
 export interface Plan {
   id: PlanId;
   track: 'asaas' | 'regua-n8n';
@@ -17,6 +21,8 @@ export interface Plan {
   headline: string;
   baseMonthlyPrice: number;
   baseSetupPrice: number;
+  clientPortfolioMonthlyPrice?: number;
+  clientPortfolioSetupPrice?: number;
   badge?: string;
   recommended?: boolean;
   idealFor: string;
@@ -139,6 +145,12 @@ export interface ProposalFinancials {
   setupDiscountReason?: string;
   setupTotal: number;
 
+  setupPaymentMode?: SetupPaymentMode;
+  setupCashPrice?: number;
+  setupInstallmentTotal?: number;
+  setupInstallmentsCount?: number;
+  allowClientChooseSetupMode?: boolean;
+
   monthlyPrice: number;
   monthlyDiscountApplied: boolean;
   monthlyDiscountValue: number;
@@ -146,6 +158,7 @@ export interface ProposalFinancials {
   monthlyTotal: number;
 
   hasPromptPaymentDiscount: boolean;
+  promptPaymentDiscountPercent?: number;
   monthlyWithPromptDiscount: number;
   dueDay: number;
 }
@@ -155,6 +168,7 @@ export interface ContractServiceItem {
   name: string;
   category: 'asaas' | 'regua-n8n' | 'consultoria' | 'custom';
   planId?: PlanId;
+  reguaPortfolioType?: ReguaPortfolioType;
   setupPrice: number;
   monthlyPrice: number;
   description?: string;
@@ -173,6 +187,7 @@ export interface CommercialProposal {
   
   serviceTrack: ServiceTrack;
   planId: PlanId;
+  reguaPortfolioType?: ReguaPortfolioType;
   selectedServices?: ContractServiceItem[];
   contractDurationText?: string; // ex: 'Tempo Indeterminado (sem vencimento preestabelecido)'
   
