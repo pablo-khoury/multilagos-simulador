@@ -496,22 +496,88 @@ export function getTieredPlanPrice(
   return null;
 }
 
-// Payload serialization for 100% accurate client link sharing
+const PROPOSALS_BY_ID_STORAGE_KEY = 'multilagos_proposals_by_id_v1';
+
+function utf8ToBase64Url(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+function decodeBase64Flexible(input: string): string {
+  let unescaped = input.trim();
+  try {
+    unescaped = decodeURIComponent(unescaped);
+  } catch {
+    // Keep raw if already decoded
+  }
+  let b64 = unescaped.replace(/-/g, '+').replace(/_/g, '/').replace(/\s/g, '');
+  while (b64.length % 4 !== 0) {
+    b64 += '=';
+  }
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    // Fallback for legacy Latin-1 btoa links
+    return binary;
+  }
+}
+
+export function saveProposalSnapshotLocally(proposal: CommercialProposal): void {
+  if (!proposal?.id) return;
+  try {
+    const raw = localStorage.getItem(PROPOSALS_BY_ID_STORAGE_KEY);
+    const map: Record<string, CommercialProposal> = raw ? JSON.parse(raw) : {};
+    map[proposal.id] = proposal;
+    const keys = Object.keys(map);
+    if (keys.length > 30) {
+      delete map[keys[0]];
+    }
+    localStorage.setItem(PROPOSALS_BY_ID_STORAGE_KEY, JSON.stringify(map));
+  } catch {}
+}
+
+export function loadProposalSnapshotLocally(proposalId: string): CommercialProposal | null {
+  if (!proposalId) return null;
+  try {
+    const raw = localStorage.getItem(PROPOSALS_BY_ID_STORAGE_KEY);
+    if (!raw) return null;
+    const map: Record<string, CommercialProposal> = JSON.parse(raw);
+    return map[proposalId] || null;
+  } catch {
+    return null;
+  }
+}
+
+// Payload serialization for 100% accurate client link sharing (UTF-8 & URL-safe Base64)
 export function encodeProposalToUrlParam(proposal: CommercialProposal): string {
   try {
-    let savedGoogleToken: string | undefined = undefined;
     let savedWebhookUrl: string | undefined = undefined;
     try {
-      const tok = localStorage.getItem('multilagos_google_workspace_token');
-      if (tok) savedGoogleToken = tok;
-      const wh = localStorage.getItem('multilagos_google_webhook_url') || ((import.meta as any).env?.VITE_GOOGLE_WEBHOOK_URL || '');
+      const wh =
+        localStorage.getItem('multilagos_google_webhook_url') ||
+        ((import.meta as any).env?.VITE_GOOGLE_WEBHOOK_URL || '');
       if (wh && String(wh).trim()) savedWebhookUrl = String(wh).trim();
     } catch {}
 
     const setupDetails = getSetupBillingDetails(proposal.financials);
     const promptPct = getEffectivePromptDiscountPercent(proposal.financials);
+    const rawCompanyName = (proposal.clientInfo.companyName || '').trim();
+    const cleanCompanyName = rawCompanyName === 'Minha Empresa Ltda' ? '' : rawCompanyName;
 
     const compact: Record<string, any> = {
+      v: 2,
       id: proposal.id,
       mId: proposal.contractMasterId,
       tr: proposal.serviceTrack,
@@ -521,7 +587,7 @@ export function encodeProposalToUrlParam(proposal: CommercialProposal): string {
       sD: proposal.financials.setupDiscountApplied,
       sDV: proposal.financials.setupDiscountValue,
       sDR: proposal.financials.setupDiscountReason || '',
-      sT: proposal.financials.setupTotal,
+      sT: setupDetails.contractedTotal,
       sPM: setupDetails.mode,
       sCP: setupDetails.cashPrice,
       sIT: setupDetails.installmentTotal,
@@ -535,31 +601,50 @@ export function encodeProposalToUrlParam(proposal: CommercialProposal): string {
       hPP: proposal.financials.hasPromptPaymentDiscount !== false && promptPct > 0,
       pPP: promptPct,
       mWP: proposal.financials.monthlyWithPromptDiscount,
-      dD: proposal.financials.dueDay,
-      cn: proposal.clientInfo.companyName,
-      cr: proposal.clientInfo.contactName,
-      em: proposal.clientInfo.email,
-      ph: proposal.clientInfo.phone,
-      cp: proposal.clientInfo.cnpj,
+      dD: proposal.financials.dueDay || 10,
+      cn: cleanCompanyName,
+      tn: proposal.clientInfo.tradeName || '',
+      cp: proposal.clientInfo.cnpj || '',
+      ad: proposal.clientInfo.address || '',
+      cr: proposal.clientInfo.contactName || '',
+      rl: proposal.clientInfo.contactRole || '',
+      cpf: proposal.clientInfo.cpf || '',
+      em: proposal.clientInfo.email || '',
+      ph: proposal.clientInfo.phone || '',
+      cs: proposal.clientInfo.cityState || 'Belo Horizonte/MG',
       cSys: proposal.clientInfo.currentSystemName || '',
       cWpp: proposal.clientInfo.connectedWhatsApp || '',
       dt: proposal.createdAt,
       vt: proposal.validUntil,
     };
 
+    if (proposal.notes && proposal.notes.trim()) {
+      compact.nt = proposal.notes.trim();
+    }
+
+    if (proposal.customFeatures && proposal.customFeatures.length > 0) {
+      compact.cf = proposal.customFeatures;
+    }
+
     if (savedWebhookUrl) {
       compact.wh = savedWebhookUrl;
     }
 
-    if (savedGoogleToken) {
-      compact.gt = savedGoogleToken;
-    }
-
     if (proposal.selectedServices && proposal.selectedServices.length > 0) {
-      compact.sv = proposal.selectedServices;
+      compact.sv = proposal.selectedServices.map((s) => ({
+        i: s.id,
+        n: s.name,
+        c: s.category,
+        p: s.planId,
+        r: s.reguaPortfolioType,
+        s: s.setupPrice,
+        m: s.monthlyPrice,
+        d: s.description,
+        f: s.features,
+      }));
     }
 
-    return encodeURIComponent(btoa(JSON.stringify(compact)));
+    return utf8ToBase64Url(JSON.stringify(compact));
   } catch (e) {
     console.error('Error encoding proposal:', e);
     return '';
@@ -568,8 +653,10 @@ export function encodeProposalToUrlParam(proposal: CommercialProposal): string {
 
 export function decodeProposalFromUrlParam(param: string): Partial<CommercialProposal> | null {
   try {
-    const json = atob(decodeURIComponent(param));
+    if (!param || !param.trim()) return null;
+    const json = decodeBase64Flexible(param);
     const data = JSON.parse(json);
+    if (!data || typeof data !== 'object') return null;
 
     // If a 24h Google Apps Script Webhook URL was encoded by the consultant, save it so remote clients sync 24/7
     if (data.wh) {
@@ -578,7 +665,7 @@ export function decodeProposalFromUrlParam(param: string): Partial<CommercialPro
       } catch {}
     }
 
-    // If a Google Workspace token was encoded by the consultant, save it so client auto-syncs seamlessly
+    // Legacy Google Workspace OAuth token support
     if (data.gt) {
       try {
         localStorage.setItem('multilagos_google_workspace_token', data.gt);
@@ -589,28 +676,54 @@ export function decodeProposalFromUrlParam(param: string): Partial<CommercialPro
     const hasPrompt = typeof data.hPP === 'boolean' ? data.hPP : true;
     const promptPct = typeof data.pPP === 'number' ? data.pPP : (hasPrompt ? 5 : 0);
 
+    const decodedServices = Array.isArray(data.sv)
+      ? data.sv.map((item: any) => {
+          // Support both v2 compact keys and v1 legacy keys
+          if (item && typeof item === 'object' && ('i' in item || 'n' in item)) {
+            const matchedPlan = ALL_INITIAL_PLANS.find((pl) => pl.id === item.p);
+            return {
+              id: item.i || 'serv-item',
+              name: item.n || matchedPlan?.name || 'Serviço Contratado',
+              category: item.c || 'asaas',
+              planId: item.p,
+              reguaPortfolioType: item.r,
+              setupPrice: typeof item.s === 'number' ? item.s : 0,
+              monthlyPrice: typeof item.m === 'number' ? item.m : 0,
+              description: item.d || '',
+              features: Array.isArray(item.f) ? item.f : matchedPlan?.features,
+            };
+          }
+          return item;
+        })
+      : undefined;
+
+    const rawCompany = data.cn || '';
+    const cleanCompany = rawCompany === 'Minha Empresa Ltda' ? '' : rawCompany;
+
     return {
       id: data.id,
       contractMasterId: data.mId,
-      serviceTrack: data.tr,
-      planId: data.pId,
+      serviceTrack: data.tr || 'esteira-asaas',
+      planId: data.pId || 'pro',
       reguaPortfolioType: data.rPT === 'client' ? 'client' : 'multilagos',
+      notes: typeof data.nt === 'string' ? data.nt : undefined,
+      customFeatures: Array.isArray(data.cf) ? data.cf : undefined,
       financials: {
-        setupPrice: data.sP,
-        setupDiscountApplied: data.sD,
-        setupDiscountValue: data.sDV,
-        setupDiscountReason: data.sDR,
-        setupTotal: data.sT,
+        setupPrice: typeof data.sP === 'number' ? data.sP : (data.sT || 0),
+        setupDiscountApplied: !!data.sD,
+        setupDiscountValue: typeof data.sDV === 'number' ? data.sDV : 0,
+        setupDiscountReason: data.sDR || '',
+        setupTotal: typeof data.sT === 'number' ? data.sT : 0,
         setupPaymentMode: data.sPM === 'installments' ? 'installments' : 'cash',
-        setupCashPrice: typeof data.sCP === 'number' ? data.sCP : data.sT,
-        setupInstallmentTotal: typeof data.sIT === 'number' ? data.sIT : data.sT,
+        setupCashPrice: typeof data.sCP === 'number' ? data.sCP : (data.sT || 0),
+        setupInstallmentTotal: typeof data.sIT === 'number' ? data.sIT : (data.sT || 0),
         setupInstallmentsCount: typeof data.sIC === 'number' ? data.sIC : 3,
         allowClientChooseSetupMode: data.sAC !== false,
-        monthlyPrice: data.mP,
-        monthlyDiscountApplied: data.mD,
-        monthlyDiscountValue: data.mDV,
-        monthlyDiscountReason: data.mDR,
-        monthlyTotal: data.mT,
+        monthlyPrice: typeof data.mP === 'number' ? data.mP : (data.mT || 0),
+        monthlyDiscountApplied: !!data.mD,
+        monthlyDiscountValue: typeof data.mDV === 'number' ? data.mDV : 0,
+        monthlyDiscountReason: data.mDR || '',
+        monthlyTotal: typeof data.mT === 'number' ? data.mT : 0,
         hasPromptPaymentDiscount: hasPrompt,
         promptPaymentDiscountPercent: promptPct,
         monthlyWithPromptDiscount:
@@ -620,20 +733,20 @@ export function decodeProposalFromUrlParam(param: string): Partial<CommercialPro
         dueDay: data.dD || 10,
       },
       clientInfo: {
-        companyName: data.cn || '',
-        tradeName: '',
+        companyName: cleanCompany,
+        tradeName: data.tn || '',
         cnpj: data.cp || '',
-        address: '',
+        address: data.ad || '',
         contactName: data.cr || '',
-        contactRole: 'Representante Legal',
-        cpf: '',
+        contactRole: data.rl || 'Representante Legal',
+        cpf: data.cpf || '',
         email: data.em || '',
         phone: data.ph || '',
-        cityState: 'Belo Horizonte/MG',
+        cityState: data.cs || 'Belo Horizonte/MG',
         currentSystemName: data.cSys || '',
         connectedWhatsApp: data.cWpp || '',
       },
-      selectedServices: data.sv || undefined,
+      selectedServices: decodedServices,
       createdAt: data.dt,
       validUntil: data.vt,
     };
@@ -641,4 +754,73 @@ export function decodeProposalFromUrlParam(param: string): Partial<CommercialPro
     console.error('Error decoding proposal:', e);
     return null;
   }
+}
+
+export function buildClientShareUrl(proposal: CommercialProposal): string {
+  if (typeof window === 'undefined') return '';
+  saveProposalSnapshotLocally(proposal);
+  const encoded = encodeProposalToUrlParam(proposal);
+  const base = `${window.location.origin}${window.location.pathname}`;
+  return `${base}?proposta=${encodeURIComponent(proposal.id)}&p=${encoded}`;
+}
+
+export function extractProposalFromCurrentUrl(): {
+  isClientAccess: boolean;
+  decoded: Partial<CommercialProposal> | null;
+  proposalId: string | null;
+} {
+  if (typeof window === 'undefined') {
+    return { isClientAccess: false, decoded: null, proposalId: null };
+  }
+
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashRaw = window.location.hash.startsWith('#')
+    ? window.location.hash.slice(1)
+    : window.location.hash;
+  const hashParams = new URLSearchParams(hashRaw.startsWith('?') ? hashRaw.slice(1) : hashRaw);
+
+  const encodedPayload = searchParams.get('p') || hashParams.get('p');
+  const proposalId = searchParams.get('proposta') || hashParams.get('proposta');
+  const isClientTab = searchParams.get('tab') === 'cliente' || hashParams.get('tab') === 'cliente';
+
+  if (encodedPayload && encodedPayload.trim()) {
+    const decoded = decodeProposalFromUrlParam(encodedPayload);
+    if (decoded) {
+      return {
+        isClientAccess: true,
+        decoded,
+        proposalId: decoded.id || proposalId,
+      };
+    }
+  }
+
+  if (proposalId) {
+    const localSnapshot = loadProposalSnapshotLocally(proposalId);
+    if (localSnapshot) {
+      return {
+        isClientAccess: true,
+        decoded: localSnapshot,
+        proposalId,
+      };
+    }
+    return {
+      isClientAccess: true,
+      decoded: null,
+      proposalId,
+    };
+  }
+
+  if (isClientTab) {
+    return {
+      isClientAccess: true,
+      decoded: null,
+      proposalId: null,
+    };
+  }
+
+  return {
+    isClientAccess: false,
+    decoded: null,
+    proposalId: null,
+  };
 }

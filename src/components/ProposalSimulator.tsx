@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Plan, 
   PlanId, 
@@ -14,7 +14,7 @@ import {
 import { 
   formatBRL, 
   formatCleanPercent,
-  encodeProposalToUrlParam, 
+  buildClientShareUrl,
   calculateDiagnosticMetrics,
   getPricingTierForClientCount,
   getTieredPlanPrice,
@@ -54,7 +54,9 @@ import {
   Calendar,
   CreditCard,
   TrendingDown,
-  Users
+  Users,
+  RefreshCw,
+  Link2
 } from 'lucide-react';
 
 interface ProposalSimulatorProps {
@@ -64,6 +66,8 @@ interface ProposalSimulatorProps {
   selectedPlanId: PlanId;
   activeProposal: CommercialProposal;
   diagnosticData?: DiagnosticSheetData;
+  syncVersion?: number;
+  onCreateNewProposal?: () => void;
   onUpdateTrack: (track: ServiceTrack) => void;
   onUpdatePlan: (planId: PlanId) => void;
   onUpdateFinancials: (fin: ProposalFinancials) => void;
@@ -75,6 +79,40 @@ interface ProposalSimulatorProps {
   onUpdateReguaPortfolio?: (portfolio: ReguaPortfolioType) => void;
 }
 
+function deriveSelectionFromProposal(
+  proposal: CommercialProposal,
+  fallbackTrack: ServiceTrack,
+  fallbackPlanId: PlanId
+) {
+  const services = proposal.selectedServices || [];
+  if (services.length > 0) {
+    const asaasItem = services.find((s) => s.category === 'asaas');
+    const reguaItem = services.find((s) => s.category === 'regua-n8n');
+    const bpoItem = services.find((s) => s.id === 'serv-bpo' || s.category === 'consultoria');
+    const customList = services.filter((s) => s.category === 'custom');
+
+    return {
+      includeAsaas: !!asaasItem,
+      selectedAsaasPlanId: (asaasItem?.planId || (fallbackTrack === 'esteira-asaas' ? fallbackPlanId : 'pro')) as PlanId,
+      includeRegua: !!reguaItem,
+      selectedReguaPlanId: (reguaItem?.planId || (fallbackTrack === 'esteira-regua-n8n' ? fallbackPlanId : 'regua-3k')) as PlanId,
+      includeBpo: !!bpoItem,
+      customServices: customList,
+      reguaPortfolio: (reguaItem?.reguaPortfolioType || proposal.reguaPortfolioType || 'multilagos') as ReguaPortfolioType,
+    };
+  }
+
+  return {
+    includeAsaas: fallbackTrack === 'esteira-asaas',
+    selectedAsaasPlanId: (fallbackTrack === 'esteira-asaas' ? fallbackPlanId : 'pro') as PlanId,
+    includeRegua: fallbackTrack === 'esteira-regua-n8n',
+    selectedReguaPlanId: (fallbackTrack === 'esteira-regua-n8n' ? fallbackPlanId : 'regua-3k') as PlanId,
+    includeBpo: false,
+    customServices: [] as ContractServiceItem[],
+    reguaPortfolio: (proposal.reguaPortfolioType || 'multilagos') as ReguaPortfolioType,
+  };
+}
+
 export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
   plans,
   pricingTiers,
@@ -82,6 +120,8 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
   selectedPlanId,
   activeProposal,
   diagnosticData,
+  syncVersion = 0,
+  onCreateNewProposal,
   onUpdateTrack,
   onUpdatePlan,
   onUpdateFinancials,
@@ -97,33 +137,41 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
   const [previewDocType, setPreviewDocType] = useState<'proposal' | 'contract'>('proposal');
   const [newFeatureInput, setNewFeatureInput] = useState('');
 
-  // Multi-service state
+  // Multi-service state derived from activeProposal so switching tabs never resets the proposal
   const asaasPlans = plans.filter((p) => p.track === 'asaas');
   const reguaPlans = plans.filter((p) => p.track === 'regua-n8n');
 
+  const initialSelection = deriveSelectionFromProposal(activeProposal, selectedServiceTrack, selectedPlanId);
+
   // Regua WhatsApp Portfolio pricing mode ('multilagos' = Meta inclusa | 'client' = Portfólio BM do Cliente)
   const [reguaPortfolio, setReguaPortfolio] = useState<ReguaPortfolioType>(
-    activeProposal.reguaPortfolioType || 'multilagos'
+    initialSelection.reguaPortfolio
   );
 
   // Setup installment pricing preset mode
-  const [installmentMarkupMode, setInstallmentMarkupMode] = useState<'same' | 'table' | 'plus5' | 'plus10' | 'custom'>('same');
+  const [installmentMarkupMode, setInstallmentMarkupMode] = useState<'same' | 'table' | 'plus5' | 'plus10' | 'custom'>(() => {
+    const f = activeProposal.financials;
+    if (
+      typeof f.setupInstallmentTotal === 'number' &&
+      typeof f.setupCashPrice === 'number' &&
+      f.setupInstallmentTotal !== f.setupCashPrice
+    ) {
+      return 'custom';
+    }
+    return 'same';
+  });
 
   // Multi-service checkboxes
-  const [includeAsaas, setIncludeAsaas] = useState(true);
-  const [selectedAsaasPlanId, setSelectedAsaasPlanId] = useState<PlanId>(
-    selectedServiceTrack === 'esteira-asaas' ? selectedPlanId : 'pro'
-  );
+  const [includeAsaas, setIncludeAsaas] = useState<boolean>(initialSelection.includeAsaas);
+  const [selectedAsaasPlanId, setSelectedAsaasPlanId] = useState<PlanId>(initialSelection.selectedAsaasPlanId);
 
-  const [includeRegua, setIncludeRegua] = useState(selectedServiceTrack === 'esteira-regua-n8n');
-  const [selectedReguaPlanId, setSelectedReguaPlanId] = useState<PlanId>(
-    selectedServiceTrack === 'esteira-regua-n8n' ? selectedPlanId : 'regua-3k'
-  );
+  const [includeRegua, setIncludeRegua] = useState<boolean>(initialSelection.includeRegua);
+  const [selectedReguaPlanId, setSelectedReguaPlanId] = useState<PlanId>(initialSelection.selectedReguaPlanId);
 
-  const [includeBpo, setIncludeBpo] = useState(false);
+  const [includeBpo, setIncludeBpo] = useState<boolean>(initialSelection.includeBpo);
 
   // Custom additional services added by the consultant
-  const [customServices, setCustomServices] = useState<ContractServiceItem[]>([]);
+  const [customServices, setCustomServices] = useState<ContractServiceItem[]>(initialSelection.customServices);
   const [showAddCustomModal, setShowAddCustomModal] = useState(false);
   const [showAsaasCompareModal, setShowAsaasCompareModal] = useState(false);
   const [newServiceName, setNewServiceName] = useState('');
@@ -291,16 +339,54 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
     }
   };
 
-  // Sync initial services once on mount if empty
+  const prevSyncVersionRef = useRef(syncVersion);
+  const prevPricingDepsRef = useRef({ clientCount, pricingTiers, plans });
+
+  // Sync initial services once on mount ONLY if activeProposal has no selectedServices yet
   useEffect(() => {
     if (!activeProposal.selectedServices || activeProposal.selectedServices.length === 0) {
       updateServicesAndTotals(includeAsaas, selectedAsaasPlanId, includeRegua, selectedReguaPlanId, includeBpo, customServices, reguaPortfolio);
     }
   }, []);
 
-  // Sync pricing whenever client count, pricing tiers, or plan catalog change
+  // Re-sync UI checkboxes when external action occurs (Apply Diagnostic Recommendation or New Proposal)
   useEffect(() => {
-    updateServicesAndTotals(includeAsaas, selectedAsaasPlanId, includeRegua, selectedReguaPlanId, includeBpo, customServices, reguaPortfolio);
+    if (prevSyncVersionRef.current !== syncVersion) {
+      prevSyncVersionRef.current = syncVersion;
+      const derived = deriveSelectionFromProposal(activeProposal, selectedServiceTrack, selectedPlanId);
+      setIncludeAsaas(derived.includeAsaas);
+      setSelectedAsaasPlanId(derived.selectedAsaasPlanId);
+      setIncludeRegua(derived.includeRegua);
+      setSelectedReguaPlanId(derived.selectedReguaPlanId);
+      setIncludeBpo(derived.includeBpo);
+      setCustomServices(derived.customServices);
+      setReguaPortfolio(derived.reguaPortfolio);
+      if (!activeProposal.selectedServices || activeProposal.selectedServices.length === 0) {
+        updateServicesAndTotals(
+          derived.includeAsaas,
+          derived.selectedAsaasPlanId,
+          derived.includeRegua,
+          derived.selectedReguaPlanId,
+          derived.includeBpo,
+          derived.customServices,
+          derived.reguaPortfolio
+        );
+      }
+    }
+  }, [syncVersion, activeProposal, selectedServiceTrack, selectedPlanId]);
+
+  // Sync pricing ONLY when client count, pricing tiers, or plan catalog actually change
+  useEffect(() => {
+    const prev = prevPricingDepsRef.current;
+    const changed =
+      prev.clientCount !== clientCount ||
+      prev.pricingTiers !== pricingTiers ||
+      prev.plans !== plans;
+
+    if (changed) {
+      prevPricingDepsRef.current = { clientCount, pricingTiers, plans };
+      updateServicesAndTotals(includeAsaas, selectedAsaasPlanId, includeRegua, selectedReguaPlanId, includeBpo, customServices, reguaPortfolio);
+    }
   }, [clientCount, pricingTiers, plans]);
 
   // Preset Handlers
@@ -600,9 +686,8 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
     document.body.removeChild(a);
   };
 
-  // Link and Sharing
-  const encodedPayload = encodeProposalToUrlParam(activeProposal);
-  const clientShareUrl = `${window.location.origin}${window.location.pathname}?proposta=${activeProposal.id}&p=${encodedPayload}`;
+  // Link and Sharing (UTF-8 safe Base64URL with full proposal state)
+  const clientShareUrl = buildClientShareUrl(activeProposal);
 
   const handleCopyClientLink = () => {
     navigator.clipboard.writeText(clientShareUrl);
@@ -700,10 +785,21 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
             <span className="text-xs font-mono text-slate-400 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700">
               Proposta: <strong className="text-white">{activeProposal.id}</strong>
             </span>
+            {onCreateNewProposal && (
+              <button
+                type="button"
+                onClick={onCreateNewProposal}
+                className="text-xs font-bold text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Gerar novo número de proposta zerado para outro cliente"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-[#D40B3A]" />
+                <span>Nova Proposta</span>
+              </button>
+            )}
             <span className="text-xs font-semibold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-3 py-1.5 rounded-lg">
               Vigência: Tempo Indeterminado
             </span>
@@ -2280,6 +2376,50 @@ export const ProposalSimulator: React.FC<ProposalSimulatorProps> = ({
               className="w-full px-3.5 py-2.5 bg-[#16242A] border border-slate-700/80 rounded-xl text-white text-xs placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-[#D40B3A] resize-y leading-relaxed"
             />
           </div>
+
+          {/* Link Exclusivo Verificável da Proposta para o Cliente */}
+          {(() => {
+            const setupDet = getSetupBillingDetails(fin);
+            const promptPct = getEffectivePromptDiscountPercent(fin);
+            const hasPrompt = fin.hasPromptPaymentDiscount !== false && promptPct > 0;
+            const summaryServices =
+              (activeProposal.selectedServices || []).map((s) => s.name).join(' + ') ||
+              currentAsaasPlan.name;
+
+            return (
+              <div className="p-4 rounded-xl bg-[#111F24] border border-emerald-800/70 space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <Link2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span className="font-bold text-white uppercase tracking-wider">
+                      Link Exclusivo da Proposta para Enviar ao Cliente ({activeProposal.id})
+                    </span>
+                  </div>
+                  <span className="text-[11px] font-mono text-emerald-400">
+                    ✓ Sincronizado: {summaryServices} · Setup {setupDet.mode === 'installments' ? `${setupDet.installmentsCount}x ${formatBRL(setupDet.installmentValue)}` : `${formatBRL(setupDet.cashPrice)} à vista`} · Mensal {formatBRL(fin.monthlyTotal)}{hasPrompt ? ` (${formatCleanPercent(promptPct)}% até dia 05)` : ''}
+                  </span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={clientShareUrl}
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                    className="flex-1 px-3 py-2 bg-[#16242A] border border-slate-700 rounded-xl text-[11px] font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCopyClientLink}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow"
+                  >
+                    {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedLink ? 'Link da Proposta Copiado!' : 'Copiar Link do Cliente'}</span>
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Action Row for the Consultant */}
           <div className="pt-4 border-t border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-4">

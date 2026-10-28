@@ -17,6 +17,7 @@ import {
   getSetupBillingDetails,
   getEffectivePromptDiscountPercent,
   calculateMonthlyWithPromptDiscount,
+  buildClientShareUrl,
 } from '../utils/calculator';
 import { processAsaasContractBilling } from '../utils/asaasService';
 import { exportElementToPdf } from '../utils/pdfGenerator';
@@ -55,7 +56,10 @@ import {
   Package,
   Clock,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  Copy,
+  Link2,
+  Send
 } from 'lucide-react';
 
 interface ClientAcceptanceViewProps {
@@ -64,6 +68,7 @@ interface ClientAcceptanceViewProps {
   customPlans?: Plan[];
   isClientDirectAccess?: boolean;
   onUpdateFinancials?: (fin: ProposalFinancials) => void;
+  onUpdateClientInfo?: (info: ClientInfo) => void;
   onProposalSigned: (updatedProposal: CommercialProposal) => void;
   onBackToConsultantView?: () => void;
 }
@@ -74,12 +79,16 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
   customPlans = ALL_INITIAL_PLANS,
   isClientDirectAccess = false,
   onUpdateFinancials,
+  onUpdateClientInfo,
   onProposalSigned,
   onBackToConsultantView,
 }) => {
+  const sanitizeCompany = (name?: string) =>
+    name && name !== 'Minha Empresa Ltda' ? name : '';
+
   // Client input data with live sync
   const [clientInfo, setClientInfo] = useState<ClientInfo>({
-    companyName: proposal.clientInfo.companyName || '',
+    companyName: sanitizeCompany(proposal.clientInfo.companyName),
     tradeName: proposal.clientInfo.tradeName || '',
     cnpj: proposal.clientInfo.cnpj || '',
     stateRegistration: proposal.clientInfo.stateRegistration || '',
@@ -109,6 +118,37 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
   const [asaasResult, setAsaasResult] = useState<AsaasBillingResult | null>(
     proposal.asaasBilling || null
   );
+  const [copiedPreviewLink, setCopiedPreviewLink] = useState(false);
+
+  // Sync local clientInfo & signature state whenever proposal.id changes
+  useEffect(() => {
+    setClientInfo({
+      companyName: sanitizeCompany(proposal.clientInfo.companyName),
+      tradeName: proposal.clientInfo.tradeName || '',
+      cnpj: proposal.clientInfo.cnpj || '',
+      stateRegistration: proposal.clientInfo.stateRegistration || '',
+      address: proposal.clientInfo.address || '',
+      contactName: proposal.clientInfo.contactName || '',
+      contactRole: proposal.clientInfo.contactRole || 'Diretor / Sócio-Administrador',
+      cpf: proposal.clientInfo.cpf || '',
+      email: proposal.clientInfo.email || '',
+      phone: proposal.clientInfo.phone || '',
+      cityState: proposal.clientInfo.cityState || 'Belo Horizonte/MG',
+      currentSystemName: proposal.clientInfo.currentSystemName || '',
+      connectedWhatsApp: proposal.clientInfo.connectedWhatsApp || '',
+    });
+    setTypedSignerName(proposal.clientInfo.contactName || '');
+    setIsSigned(proposal.signature?.signed || false);
+    setSignatureData(proposal.signature || { signed: false, signatureType: 'draw' });
+    setAsaasResult(proposal.asaasBilling || null);
+  }, [proposal.id]);
+
+  // Propagate consultant pre-filled client fields back to activeProposal
+  useEffect(() => {
+    if (!isClientDirectAccess && onUpdateClientInfo) {
+      onUpdateClientInfo(clientInfo);
+    }
+  }, [clientInfo, isClientDirectAccess]);
 
   // PDF download progress & validation states
   const [downloadingPropPdf, setDownloadingPropPdf] = useState(false);
@@ -559,6 +599,87 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
             </span>
           </div>
         </div>
+
+        {/* Consultant Share Bar (shown when consultant opens "Ver Link do Cliente" / "Abrir Portal do Cliente") */}
+        {!isClientDirectAccess && (() => {
+          const liveShareUrl = buildClientShareUrl({
+            ...proposal,
+            clientInfo,
+          });
+          const handleCopyFromPreview = () => {
+            navigator.clipboard.writeText(liveShareUrl);
+            setCopiedPreviewLink(true);
+            setTimeout(() => setCopiedPreviewLink(false), 3000);
+          };
+          const handleWhatsAppFromPreview = () => {
+            const serviceNames = activeServices.map((s) => s.name).join(' + ');
+            const promptLine = hasPrompt
+              ? ` (ou ${formatBRL(monthlyPromptVal)} com ${formatCleanPercent(promptPct)}% de desconto até o dia 05)`
+              : '';
+            const setupLine =
+              setupDetails.mode === 'installments'
+                ? `${setupDetails.installmentsCount}x de ${formatBRL(setupDetails.installmentValue)} (Total: ${formatBRL(setupDetails.installmentTotal)})`
+                : `${formatBRL(setupDetails.cashPrice)} à vista`;
+            const text = encodeURIComponent(
+              `Olá! Aqui é o ${MULTILAGOS_INFO.representativeName} da Multilagos.\n\n` +
+              `Segue o link exclusivo da sua Proposta Comercial (Nº ${proposal.id}):\n` +
+              `• Serviços: ${serviceNames}\n` +
+              `• Mensalidade: ${formatBRL(fin.monthlyTotal)}${promptLine}\n` +
+              `• Setup: ${setupLine}\n\n` +
+              `Acesse para conferir os termos e assinar digitalmente:\n${liveShareUrl}`
+            );
+            const a = document.createElement('a');
+            a.href = `https://api.whatsapp.com/send?text=${text}`;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          };
+
+          return (
+            <div className="no-print bg-emerald-950/40 border border-emerald-700/70 rounded-2xl p-4 sm:p-5 space-y-3 shadow-lg">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2">
+                  <Link2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="font-bold text-white uppercase tracking-wider">
+                    Link Exclusivo desta Proposta para Enviar ao Cliente ({proposal.id})
+                  </span>
+                </div>
+                <span className="text-[11px] text-emerald-300">
+                  Este link carrega exatamente os serviços, parcelamento e descontos configurados abaixo
+                </span>
+              </div>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={liveShareUrl}
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                  className="flex-1 px-3 py-2 bg-[#111F24] border border-emerald-800/80 rounded-xl text-[11px] font-mono text-slate-200 focus:outline-none"
+                />
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleCopyFromPreview}
+                    className="flex-1 sm:flex-initial px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow"
+                  >
+                    {copiedPreviewLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedPreviewLink ? 'Link Copiado!' : 'Copiar Link'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleWhatsAppFromPreview}
+                    className="flex-1 sm:flex-initial px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer border border-slate-700"
+                  >
+                    <Send className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>WhatsApp</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Highlight Banner of Approved Financial Terms & Multi-Services */}
         <div className="bg-[#16242A] border border-slate-700/80 rounded-2xl p-6 sm:p-8 space-y-6">
