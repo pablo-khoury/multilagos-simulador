@@ -98,7 +98,10 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
     cpf: proposal.clientInfo.cpf || '',
     email: proposal.clientInfo.email || '',
     phone: proposal.clientInfo.phone || '',
-    cityState: proposal.clientInfo.cityState || 'Belo Horizonte/MG',
+    cityState:
+      proposal.clientInfo.cityState && proposal.clientInfo.cityState !== 'Belo Horizonte/MG'
+        ? proposal.clientInfo.cityState
+        : '',
     currentSystemName: proposal.clientInfo.currentSystemName || '',
     connectedWhatsApp: proposal.clientInfo.connectedWhatsApp || '',
   });
@@ -133,7 +136,10 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
       cpf: proposal.clientInfo.cpf || '',
       email: proposal.clientInfo.email || '',
       phone: proposal.clientInfo.phone || '',
-      cityState: proposal.clientInfo.cityState || 'Belo Horizonte/MG',
+      cityState:
+        proposal.clientInfo.cityState && proposal.clientInfo.cityState !== 'Belo Horizonte/MG'
+          ? proposal.clientInfo.cityState
+          : '',
       currentSystemName: proposal.clientInfo.currentSystemName || '',
       connectedWhatsApp: proposal.clientInfo.connectedWhatsApp || '',
     });
@@ -283,7 +289,7 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
       cpf: clientInfo.cpf,
       email: clientInfo.email,
       phone: clientInfo.phone,
-      cityState: clientInfo.cityState,
+      cityState: clientInfo.address || clientInfo.cityState || '',
       servicesSummary,
       reguaPortfolioLabel: hasReguaServ
         ? reguaPort === 'client'
@@ -406,8 +412,8 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
 
     setValidationError(null);
 
-    if (!clientInfo.companyName.trim() || !clientInfo.cnpj.trim()) {
-      setValidationError('Por favor, preencha a Razão Social e o CNPJ da empresa.');
+    if (!clientInfo.companyName.trim() || !clientInfo.cnpj.trim() || !clientInfo.address.trim()) {
+      setValidationError('Por favor, preencha a Razão Social, o CNPJ e o Endereço Completo da empresa.');
       return;
     }
 
@@ -1112,12 +1118,14 @@ export const ClientAcceptanceView: React.FC<ClientAcceptanceViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-slate-300 font-semibold block mb-1">Endereço Completo:</label>
+                  <label className="text-slate-300 font-semibold block mb-1">
+                    Endereço Completo da Sede (Rua, nº, Bairro, Cidade/UF e CEP):
+                  </label>
                   <input
                     type="text"
                     value={clientInfo.address}
                     onChange={(e) => setClientInfo({ ...clientInfo, address: e.target.value })}
-                    placeholder="Ex: Av. Brasil, 1500, Sala 302, Centro - Belo Horizonte/MG"
+                    placeholder="Ex: Av. Paulista, 1500, Sala 302, Centro - Cidade/UF - CEP 00000-000"
                     className="w-full px-3 py-2 bg-[#111F24] border border-slate-700 rounded-xl text-white focus:outline-none focus:ring-1 focus:ring-[#D40B3A]"
                   />
                 </div>

@@ -87,7 +87,7 @@ export const MasterContractDoc: React.FC<MasterContractDocProps> = ({
                 <span className="col-span-3 font-bold text-slate-800">CONTRATANTE:</span>
                 <div className="col-span-9 text-slate-800">
                   <strong className="text-slate-950 font-bold">{clientInfo.companyName || '[RAZÃO SOCIAL DA CONTRATANTE]'}</strong>
-                  {clientInfo.tradeName ? ` (${clientInfo.tradeName})` : ''}, inscrita no CNPJ sob o nº {clientInfo.cnpj || '[CNPJ]'}, com sede em {clientInfo.address ? `${clientInfo.address}, ` : ''}{clientInfo.cityState || '[CIDADE/UF]'}, representada por <strong className="text-slate-950">{clientInfo.contactName || '[NOME DO REPRESENTANTE]'}</strong>, CPF nº {clientInfo.cpf || '[CPF]'}.
+                  {clientInfo.tradeName ? ` (${clientInfo.tradeName})` : ''}, inscrita no CNPJ sob o nº {clientInfo.cnpj || '[CNPJ]'}, com sede em {clientInfo.address?.trim() || '[ENDEREÇO COMPLETO DA CONTRATANTE]'}, representada por <strong className="text-slate-950">{clientInfo.contactName || '[NOME DO REPRESENTANTE]'}</strong>, CPF nº {clientInfo.cpf || '[CPF]'}.
                 </div>
               </div>
 
@@ -271,7 +271,7 @@ export const MasterContractDoc: React.FC<MasterContractDocProps> = ({
           </div>
 
           <div className="text-[10px] text-slate-800 leading-relaxed bg-slate-50 p-2 rounded border border-slate-200">
-            E, por estarem plenamente ajustadas e acordadas, as Partes celebram este Contrato Mestre de forma eletrônica para que produza todos os seus efeitos de direito. Local e data de expedição: {clientInfo.cityState || 'Belo Horizonte/MG'}, {isSigned && signatureData.signedAt ? signatureData.signedAt.split(' ')[0] : proposal.createdAt}.
+            E, por estarem plenamente ajustadas e acordadas, as Partes celebram este Contrato Mestre de forma eletrônica para que produza todos os seus efeitos de direito. Local e data de expedição: Belo Horizonte/MG, {isSigned && signatureData.signedAt ? signatureData.signedAt.split(' ')[0] : proposal.createdAt}.
           </div>
 
           {/* Assinaturas */}

@@ -101,7 +101,7 @@ export const OFFICIAL_MASTER_CONTRACT_V2: MasterContractModel = {
       items: [
         '7.1. As partes declaram estrito cumprimento à Lei Federal nº 13.709/2018 (Lei Geral de Proteção de Dados - LGPD). Para os efeitos legais, a CONTRATANTE figura como CONTROLADORA dos dados cadastrais e financeiros de seus clientes e devedores, e a CONTRATADA como OPERADORA técnica.',
         '7.2. A CONTRATADA tratará os dados pessoais exclusivamente na extensão estritamente necessária ao cumprimento do escopo contratado, adotando padrões rigorosos de segurança da informação, criptografia e controle de acesso.',
-        '7.3. Em caso de incidente de segurança relevante envolvendo dados pessoais sob sua custódia técnica, a CONTRATADA comunicará a CONTRATANTE em prazo razoável, cooperando na apuração dos fatos e contenção de danos.',
+        '7.3. Verificado incidente de segurança que possa acarretar risco ou dano relevante aos titulares, a CONTRATADA notificará a CONTRATANTE imediatamente assim que o incidente for detectado e confirmado, com limite máximo de até 24 (vinte e quatro) horas corridas. O tempo estimado para resolução do incidente é de até 48 (quarenta e oito) horas úteis.',
       ],
     },
     {

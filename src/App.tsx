@@ -116,7 +116,7 @@ function buildBaseProposal(
       cpf: '',
       email: '',
       phone: '',
-      cityState: 'Belo Horizonte/MG',
+      cityState: '',
       currentSystemName: diag.currentSystem,
       connectedWhatsApp: '',
     },
@@ -246,6 +246,10 @@ export default function App() {
               clientInfo: {
                 ...base.clientInfo,
                 ...(parsed.clientInfo || {}),
+                cityState:
+                  parsed.clientInfo?.cityState === 'Belo Horizonte/MG'
+                    ? ''
+                    : parsed.clientInfo?.cityState || '',
               },
               financials: {
                 ...base.financials,

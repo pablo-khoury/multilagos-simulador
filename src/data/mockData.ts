@@ -427,7 +427,7 @@ export const MASTER_CONTRACT_FULL_TEXT = {
       items: [
         '7.1. Para os fins da Lei nº 13.709/2018 (LGPD), a CONTRATANTE é controladora dos dados pessoais de seus clientes, devedores e contatos, e a CONTRATADA é operadora, tratando os dados exclusivamente para executar os serviços e conforme instruções lícitas da CONTRATANTE.',
         '7.2. A CONTRATANTE garante que os dados foram coletados de forma lícita e que possui base legal adequada ao tratamento e às ações de cobrança.',
-        '7.3. Verificado incidente de segurança que possa acarretar risco ou dano relevante aos titulares, a CONTRATADA comunicará a CONTRATANTE em até 48 (quarenta e oito) horas úteis.',
+        '7.3. Verificado incidente de segurança que possa acarretar risco ou dano relevante aos titulares, a CONTRATADA notificará a CONTRATANTE imediatamente assim que o incidente for detectado e confirmado, com limite máximo de até 24 (vinte e quatro) horas corridas. O tempo estimado para resolução do incidente é de até 48 (quarenta e oito) horas úteis.',
       ],
     },
     {

@@ -588,7 +588,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         cpf: record.cpf,
         email: record.email,
         phone: record.phone,
-        cityState: record.proposal.clientInfo?.cityState || '',
+        cityState: record.address || record.proposal.clientInfo?.address || record.proposal.clientInfo?.cityState || '',
         servicesSummary,
         reguaPortfolioLabel: recHasRegua
           ? (record.reguaPortfolioType || record.proposal.reguaPortfolioType) === 'client'
@@ -887,9 +887,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const sampleClient: ClientInfo = {
     companyName: editDiag.companyName || 'Empresa Exemplo Ltda',
     tradeName: 'Exemplo Soluções',
-    cnpj: '43.153.053/0001-55',
-    address: 'Rua Rio de Janeiro, nº 243, sala 802, Centro',
-    cityState: contractForo.replace('Comarca de ', '') || 'Belo Horizonte/MG',
+    cnpj: '00.000.000/0001-00',
+    address: '',
+    cityState: '',
     contactName: 'Carlos Eduardo Oliveira',
     contactRole: 'Diretor Financeiro',
     cpf: '133.863.187-03',
